@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    // "target": "es3",
+    // "module": "esnext",
+    "moduleResolution": "node",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "allowJs": false,
+    "checkJs": false,
+    "outDir": "dist",
+    "baseUrl": "."
+  },
+  // "include": ["index.html", "main.ts", "physics/sph.ts"],
+  "exclude": ["js", "node_modules", "dist"]
+}
