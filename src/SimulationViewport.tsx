@@ -64,6 +64,67 @@ export default function SimulationViewport({ fluidParams, ...cfg }: SimulationVi
 		Engine.forceVelocity(e.clientX + dims.left, e.clientY, e.movementX, e.movementY);
 	}, [cfg.Interactable]);
 
+	const handleTouchMove = useCallback((e: TouchEvent): void => {
+		if (!cfg.Interactable) return;
+		e.preventDefault(); // Prevent scrolling
+
+		const dims = dimensionsRef.current;
+		if (dims.windowMovementInterval !== -1) {
+			clearInterval(dims.windowMovementInterval);
+			dims.windowMovementInterval = -1;
+		}
+
+		// Use the first touch point
+		const touch = e.touches[0];
+		if (touch) {
+			// Calculate movement from the previous touch position
+			const rect = canvasRef.current?.getBoundingClientRect();
+			if (rect) {
+				const touchX = touch.clientX - rect.left;
+				const touchY = touch.clientY - rect.top;
+				
+				// Store previous touch position to calculate movement
+				const prevTouch = (e.target as any)._prevTouch;
+				let movementX = 0;
+				let movementY = 0;
+				
+				if (prevTouch) {
+					movementX = touchX - prevTouch.x;
+					movementY = touchY - prevTouch.y;
+				}
+				
+				// Store current position for next calculation
+				(e.target as any)._prevTouch = { x: touchX, y: touchY };
+				
+				Engine.forceVelocity(touchX + dims.left, touchY, movementX, movementY);
+			}
+		}
+	}, [cfg.Interactable]);
+
+	const handleTouchStart = useCallback((e: TouchEvent): void => {
+		if (!cfg.Interactable) return;
+		e.preventDefault();
+
+		// Initialize touch tracking
+		const touch = e.touches[0];
+		if (touch) {
+			const rect = canvasRef.current?.getBoundingClientRect();
+			if (rect) {
+				const touchX = touch.clientX - rect.left;
+				const touchY = touch.clientY - rect.top;
+				(e.target as any)._prevTouch = { x: touchX, y: touchY };
+			}
+		}
+	}, [cfg.Interactable]);
+
+	const handleTouchEnd = useCallback((e: TouchEvent): void => {
+		if (!cfg.Interactable) return;
+		e.preventDefault();
+
+		// Clear touch tracking
+		(e.target as any)._prevTouch = null;
+	}, [cfg.Interactable]);
+
 	const handleVisibilityChange = useCallback((): void => {
 		const dims = dimensionsRef.current;
 		if (dims.paused && !document.hidden) {
@@ -286,7 +347,7 @@ export default function SimulationViewport({ fluidParams, ...cfg }: SimulationVi
 			
 			const renderer = rendererRef.current;
 			if (renderer) {
-				// Note: mousemove listener cleanup is handled in separate useEffect
+				// Note: mouse and touch listener cleanup is handled in separate useEffect
 				renderer.dispose();
 			}
 			
@@ -295,24 +356,33 @@ export default function SimulationViewport({ fluidParams, ...cfg }: SimulationVi
 		};
 	}, []);
 
-	// Separate effect to manage mouse event listener based on interaction state
+	// Separate effect to manage mouse and touch event listeners based on interaction state
 	useEffect(() => {
 		const renderer = rendererRef.current;
 		if (!renderer) return;
 
-		// Remove existing listener
+		// Remove existing listeners
 		renderer.domElement.removeEventListener('mousemove', handleMouseMove);
+		renderer.domElement.removeEventListener('touchstart', handleTouchStart);
+		renderer.domElement.removeEventListener('touchmove', handleTouchMove);
+		renderer.domElement.removeEventListener('touchend', handleTouchEnd);
 		
-		// Add listener only if interaction is enabled
+		// Add listeners only if interaction is enabled
 		if (cfg.Interactable) {
 			renderer.domElement.addEventListener('mousemove', handleMouseMove, false);
+			renderer.domElement.addEventListener('touchstart', handleTouchStart, { passive: false });
+			renderer.domElement.addEventListener('touchmove', handleTouchMove, { passive: false });
+			renderer.domElement.addEventListener('touchend', handleTouchEnd, { passive: false });
 		}
 
 		// Cleanup function
 		return () => {
 			renderer.domElement.removeEventListener('mousemove', handleMouseMove);
+			renderer.domElement.removeEventListener('touchstart', handleTouchStart);
+			renderer.domElement.removeEventListener('touchmove', handleTouchMove);
+			renderer.domElement.removeEventListener('touchend', handleTouchEnd);
 		};
-	}, [cfg.Interactable, handleMouseMove]);
+	}, [cfg.Interactable, handleMouseMove, handleTouchStart, handleTouchMove, handleTouchEnd]);
 
 	// Effect to update fluid parameters when they change
 	useEffect(() => {

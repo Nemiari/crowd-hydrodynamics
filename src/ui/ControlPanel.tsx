@@ -1,4 +1,4 @@
-import { Card, Checkbox, Collapse } from 'antd';
+import { Button, Space, Collapse } from 'antd';
 import { Pointer } from 'lucide-react';
 
 import ControlParameters from './ControlParameters';
@@ -10,23 +10,23 @@ export default function ControlPanel({
 	viewportConfig, setViewportConfig
 }) {
 	return (
-		<Card className='ControlPanel' style={{
+		<div className='ControlPanel' style={{
 			position: 'absolute', top: '10px', left: '10px',
-			backdropFilter: 'blur(2px)',
-			width: '400px', 
+			maxWidth: '100vh', maxHeight: '80vh',
+			display: 'flex', flexDirection: 'column', gap: '10px'
 		}}>
-			<Checkbox checked={viewportConfig.Interactable}
-				onChange={(checked) => setViewportConfig({ ...viewportConfig, Interactable: checked.target.checked })}
-			> <Pointer/> </Checkbox>
-			<Collapse
-				defaultActiveKey={['1']}
-				expandIconPosition='right'
-				style={{ backgroundColor: 'transparent' }}
-			>
+			<Space size='small'>
+				<Button onClick={() => setViewportConfig({ ...viewportConfig, Interactable: !viewportConfig.Interactable })}
+					type={viewportConfig.Interactable ? 'primary' : 'default'} 
+					icon={<Pointer size={20}/>}
+				/>
+
+			</Space>
+			<Collapse defaultActiveKey={['1']} expandIconPosition='right' >
 				<Collapse.Panel header="Fluid Parameters" key="1">
 					<ControlParameters simParams={fluidParams} setSimParams={setFluidParams} />
 				</Collapse.Panel>
 			</Collapse>
-		</Card>
+		</div>
 	);
 }

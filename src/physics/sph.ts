@@ -2,9 +2,7 @@
 // Based on https://github.com/mjwatkins2/WebGL-SPH
 
 import { Position, dist2, vec2 } from './util';
-// import { FluidParams } from './Fluid';
 import DynamicObject from './DynamicObject';
-import { get } from 'http';
 
 export interface FluidParams {
 	NumParticles: number;	// Number of particles in the simulation
@@ -41,8 +39,9 @@ function Wvisc_lapl(r: number): number {
 
 
 // Simulation state
-let particles: Particle[] = [];
 let grid!: Grid;
+let particles: Particle[] = [];
+let colliders: StaticObject[] = [];
 
 const INIT_MAX_PARTICLES_IN_CELL = 50;
 
@@ -97,8 +96,8 @@ class Particle extends DynamicObject {
 		// this.Vx += Ax * dt;
 		// this.Vy += Ay * dt;
 		this.velocity.addScaledVector(a, dt);
-		
-		this.velocity.addScaledVector(new vec2(0.2, -0.3), dt);
+
+		// this.velocity.addScaledVector(new vec2(0.3, -5.3), dt);
 
 		this.velocity.clampLength(0, 10); // Limit max speed
 
@@ -284,12 +283,17 @@ function AddWallForces(p1: Particle): void {
 	}
 }
 
+function AddObstacleForces(p1: Particle): void {
+	// Implement obstacle forces here
+}
+
 // Accumulate all forces
 function CalcForces(): void {
 	for (const cell of grid.cells) {
 		for (let i = 0; i < cell.numParticles; i++) {
 			const p1 = cell.particles[i];
-			// pairwise
+
+			// Pairwise particle interactions
 			for (let j = i + 1; j < cell.numParticles; j++) {
 				AddForces(p1, cell.particles[j]);
 			}
@@ -298,7 +302,10 @@ function CalcForces(): void {
 					AddForces(p1, nb.particles[j]);
 				}
 			}
+
+			// Static colliders
 			AddWallForces(p1);
+			// AddObstacleForces(p1);
 		}
 	}
 }
@@ -335,9 +342,15 @@ const Engine = {
 
 		const nx = Math.floor(xlimit / gridCellSize);
 		const ny = Math.floor(ylimit / gridCellSize);
-		grid = new Grid();
-		grid.init(nx, ny, xlimit, ylimit);
-		particles = [];
+		
+		// Initialize grid if it doesn't exist or has wrong dimensions
+		if (!grid || grid.nx !== nx || grid.ny !== ny) {
+			grid = new Grid();
+			grid.init(nx, ny, xlimit, ylimit);
+		}
+		
+		// If we don't have particles (e.g., after HMR), they will be created by setNumParticles
+		if (particles.length === 0) { particles = []; }
 	},
 
 	resize(left: number, right: number, bottom: number, top: number): void {
@@ -348,36 +361,43 @@ const Engine = {
 	},
 
 	setNumParticles(n: number): void {
-		particles = [];
-		for (let i = 0; i < n; i++) {
-			particles.push(new Particle());
+		// Only recreate particles if count changed or if we have no particles
+		if (particles.length !== n) {
+			particles = [];
+			for (let i = 0; i < n; i++) {
+				particles.push(new Particle());
+			}
 		}
 	},
 
-	doPhysics(): void {
+	doPhysics(): void {		
+		if (!grid || particles.length === 0) return
 		const dt = 15; // milliseconds
 
 		CalcDensity();
 		CalcForces();
 		CalcForcedVelocity();
+		
 		grid.reset();
-
 		// Finally, update positions
 		particles.forEach(p => p.update(dt * 0.001));
 	},
 
 	getParticlePosition(i: number, out: Position): void {
+		if (i >= particles.length) return;
 		const p = particles[i];
 		out.x = p.x * scale;
 		out.y = p.y * scale - ymin;
 	},
 
 	getParticlePressure(i: number): number {
+		if (i >= particles.length) return 0;
 		const p = particles[i];
 		return p.P / p.rho;
 	},
 
 	getParticleVelocity(i: number): vec2 {
+		if (i >= particles.length) return new vec2(0, 0);
 		return particles[i].velocity;
 	},
 
@@ -398,7 +418,33 @@ const Engine = {
 		K    = params.GasConstant;
 		RHO0 = params.RestDensity;
 		MU   = params.Viscosity;
+	},
+
+	// Debug method to check simulation state
+	getSimulationState(): { particleCount: number; hasGrid: boolean; isInitialized: boolean } {
+		return {
+			particleCount: particles.length,
+			hasGrid: !!grid,
+			isInitialized: particles.length > 0 && !!grid
+		};
 	}
 };
+
+// // HMR handling - preserve particle count but allow new code to take effect
+// if ((import.meta as any).hot) {
+// 	(import.meta as any).hot.accept(() => {
+// 		console.log('SPH module hot reloaded');
+// 		// If we had particles before HMR, we need to recreate them
+// 		// The React component won't know to call setNumParticles again
+// 		const particleCount = particles.length;
+// 		if (particleCount > 0) {
+// 			console.log(`Recreating ${particleCount} particles after HMR`);
+// 			particles = [];
+// 			for (let i = 0; i < particleCount; i++) {
+// 				particles.push(new Particle());
+// 			}
+// 		}
+// 	});
+// }
 
 export default Engine;

@@ -3,6 +3,24 @@
 	&:hover, &:focus,	&.active { opacity: 1; }
 
 	transition: linear 0.2s;
+
+	& > * {
+		backdrop-filter: blur(2px);
+	}
+
+	& .ant-collapse {
+		/* background-color: tomato; */
+	};
+
+	& .ant-space {
+		backdrop-filter: none;
+	}
+
+	& .ant-collapse-header {
+		font-weight: bold;
+		/* background-color: var(--primary-color); */
+		/* background-color: rgb(from var(--primary-color) r g b); */
+	}
 }
 
 .ant-switch svg {

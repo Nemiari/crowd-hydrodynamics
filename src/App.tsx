@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import SimulationViewport from './SimulationViewport';
-import { theme, ConfigProvider } from 'antd';
+import { theme, ConfigProvider, Collapse } from 'antd';
 import { Pointer } from 'lucide-react';
 
 import ControlPanel from './ui/ControlPanel';
@@ -18,12 +18,31 @@ const defaultViewportConfig = {
 	Interactable: true,
 };
 
+const appCSS = {
+	width: '100%',
+	height: '100vh',
+	position: 'relative',
+	"--primary-color": "rgb(45, 31, 66)",
+	"--bg-container-color": "rgba(0, 0, 0, 0.8)",
+} as React.CSSProperties;
+
 const uiTheme = {
 	algorithm: theme.darkAlgorithm,
+	cssVar: true,
 	token: {
-		colorBgContainer: 'rgba(20, 20, 20, 0.8)'
+		colorPrimary: appCSS["--primary-color"],
+		colorBgContainer: appCSS["--bg-container-color"],
+	},
+
+	components: {
+		Collapse: {
+			"headerBg": "rgb(from var(--primary-color) r g b / 0.8)",
+			"contentBg": "rgba(0, 0, 0, 0.7)",
+		}
 	},
 };	
+
+
 
 
 export default function App() {
@@ -31,7 +50,7 @@ export default function App() {
 	const [viewportConfig, setViewportConfig] = useState(defaultViewportConfig);
 
 	return (
-		<div className='App' style={{ width: '100%', height: '100vh', position: 'relative' }}>
+		<div className='App' style={appCSS}>
 			<ConfigProvider theme={uiTheme} >
 				<ControlPanel
 					fluidParams={fluidParams} setFluidParams={setFluidParams}
