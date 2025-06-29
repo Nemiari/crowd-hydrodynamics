@@ -1,21 +1,17 @@
 import React, { useEffect, useRef, useCallback } from 'react';
 import * as THREE from 'three';
-import Engine from './physics/sph';
+import Engine, { FluidParams } from './physics/sph';
 
-interface FluidParams {
-	NumParticles: number;
-	ParticleMass: number;
-	GasConstant: number;
-	RestDensity: number;
-	Viscosity: number;
+export interface ViewportConfig {
+	Interactable: boolean;
 }
 
-interface SimulationViewportProps {
-	mouseInteractionEnabled: boolean;
+
+interface SimulationViewportProps extends ViewportConfig {
 	fluidParams: FluidParams;
 }
 
-export default function SimulationViewport({ mouseInteractionEnabled, fluidParams }: SimulationViewportProps) {
+export default function SimulationViewport({ fluidParams, ...cfg }: SimulationViewportProps) {
 	const canvasRef = useRef<HTMLDivElement>(null);
 	const sceneRef = useRef<THREE.Scene | null>(null);
 	const cameraRef = useRef<THREE.OrthographicCamera | null>(null);
@@ -58,15 +54,15 @@ export default function SimulationViewport({ mouseInteractionEnabled, fluidParam
 	}, []);
 
 	const handleMouseMove = useCallback((e: MouseEvent): void => {
-		if (!mouseInteractionEnabled) return;
-		
+		if (!cfg.Interactable) return;
+
 		const dims = dimensionsRef.current;
 		if (dims.windowMovementInterval !== -1) {
 			clearInterval(dims.windowMovementInterval);
 			dims.windowMovementInterval = -1;
 		}
 		Engine.forceVelocity(e.clientX + dims.left, e.clientY, e.movementX, e.movementY);
-	}, [mouseInteractionEnabled]);
+	}, [cfg.Interactable]);
 
 	const handleVisibilityChange = useCallback((): void => {
 		const dims = dimensionsRef.current;
@@ -172,7 +168,7 @@ export default function SimulationViewport({ mouseInteractionEnabled, fluidParam
 			// Change mesh based on movement
 			const velocity = Engine.getParticleVelocity(i);
 			if (velocity.lengthSq() < 0.5) { // Set to circle if not moving
-				meshes[i].scale.set(0.5, 0.5, 0.5);
+				meshes[i].scale.setScalar(0.8);
 				meshes[i].rotation.z = 0;
 				meshes[i].geometry = circleRef.current;
 			} else { // Set to arrow if moving
@@ -308,7 +304,7 @@ export default function SimulationViewport({ mouseInteractionEnabled, fluidParam
 		renderer.domElement.removeEventListener('mousemove', handleMouseMove);
 		
 		// Add listener only if interaction is enabled
-		if (mouseInteractionEnabled) {
+		if (cfg.Interactable) {
 			renderer.domElement.addEventListener('mousemove', handleMouseMove, false);
 		}
 
@@ -316,7 +312,7 @@ export default function SimulationViewport({ mouseInteractionEnabled, fluidParam
 		return () => {
 			renderer.domElement.removeEventListener('mousemove', handleMouseMove);
 		};
-	}, [mouseInteractionEnabled, handleMouseMove]);
+	}, [cfg.Interactable, handleMouseMove]);
 
 	// Effect to update fluid parameters when they change
 	useEffect(() => {

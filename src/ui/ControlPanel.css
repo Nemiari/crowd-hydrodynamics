@@ -1,0 +1,13 @@
+.ControlPanel {
+	/* opacity: 0.2; */
+	&:hover, &:focus,	&.active { opacity: 1; }
+
+	transition: linear 0.2s;
+}
+
+.ant-switch svg {
+	vertical-align: middle;
+	width: 16px;
+	height: 16px;
+}
+

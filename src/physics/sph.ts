@@ -2,9 +2,17 @@
 // Based on https://github.com/mjwatkins2/WebGL-SPH
 
 import { Position, dist2, vec2 } from './util';
-import { FluidParams } from './Fluid';
+// import { FluidParams } from './Fluid';
 import DynamicObject from './DynamicObject';
 import { get } from 'http';
+
+export interface FluidParams {
+	NumParticles: number;	// Number of particles in the simulation
+	ParticleMass: number;	// Mass of each particle
+	GasConstant: number;	// Gas constant for the equation of state
+	RestDensity: number;	// Rest density of the fluid
+	Viscosity: number;		// Viscosity of the fluid
+};
 
 // Smoothing Kernels
 const h  = 1;
