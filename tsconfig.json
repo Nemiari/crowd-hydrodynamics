@@ -1,17 +1,51 @@
 {
-  "compilerOptions": {
-    // "target": "es3",
-    // "module": "esnext",
-    "moduleResolution": "node",
-    "strict": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
+	"compilerOptions": {
+		"module": "ESNext",
+		"target": "ES2022",
+		"lib": ["ES2022", "DOM", "DOM.Iterable", "es6"],
+
+		"skipLibCheck": true,
+		"useDefineForClassFields": true,
     "forceConsistentCasingInFileNames": true,
-    "allowJs": false,
-    "checkJs": false,
-    "outDir": "dist",
-    "baseUrl": "."
-  },
-  // "include": ["index.html", "main.ts", "physics/sph.ts"],
-  "exclude": ["js", "node_modules", "dist"]
+		"esModuleInterop": true,
+		
+		"outDir": "dist",
+		// "baseUrl": "./src/",
+		"paths": {
+			"@/*": ["./src/*"],
+			"@icons": ["./src/assets/icons"],
+			"@apps/*": ["./src/applications/*"],
+			"@types/*": ["./src/types/*"]
+		},
+
+		"typeRoots": [
+			"./node_modules/@types",
+			"./src/types"
+		],
+
+		"tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
+		
+		/* Bundler mode */
+		"moduleResolution": "bundler",
+		"allowImportingTsExtensions": true,
+		"isolatedModules": true,
+		"moduleDetection": "force",
+		"noEmit": true,
+		"allowJs": false,
+		"jsx": "react-jsx",
+		
+		/* Linting */
+		"strict": true,
+		"checkJs": false,
+		"noUnusedLocals": false,
+		"noUnusedParameters": true,
+		"noFallthroughCasesInSwitch": true,
+		"noUncheckedSideEffectImports": true
+	},
+
+	"include": [
+		"src/**/*.{ts,tsx,js,jsx}",
+		"src/assets",
+		"vite.config.ts"
+	]
 }

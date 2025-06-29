@@ -4,6 +4,7 @@
 import { Position, dist2, vec2 } from './util';
 import { FluidParams } from './Fluid';
 import DynamicObject from './DynamicObject';
+import { get } from 'http';
 
 // Smoothing Kernels
 const h  = 1;
@@ -89,7 +90,7 @@ class Particle extends DynamicObject {
 		// this.Vy += Ay * dt;
 		this.velocity.addScaledVector(a, dt);
 		
-		this.velocity.addScaledVector(new vec2(0.2, -0.2), dt);
+		this.velocity.addScaledVector(new vec2(0.2, -0.3), dt);
 
 		this.velocity.clampLength(0, 10); // Limit max speed
 
@@ -310,6 +311,12 @@ function CalcForcedVelocity(): void {
 
 
 const Engine = {
+	cleanup(): void {
+		particles = [];
+		forceVelocityOn = false;
+		if (grid) grid.reset();
+	},
+
 	init(width: number, height: number, left: number, right: number, bottom: number, top: number): void {
 		const xlimit = width  / scale;
 		xmin = left   / scale;
@@ -360,6 +367,10 @@ const Engine = {
 	getParticlePressure(i: number): number {
 		const p = particles[i];
 		return p.P / p.rho;
+	},
+
+	getParticleVelocity(i: number): vec2 {
+		return particles[i].velocity;
 	},
 
 	forceVelocity(x: number, y: number, Vx: number, Vy: number): void {
