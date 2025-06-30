@@ -1,15 +1,15 @@
 import { Button, Space, Collapse } from 'antd';
-import { Pause, Play, Pointer } from 'lucide-react';
+import { Pause, Play, Pointer, Trash2 } from 'lucide-react';
 
 import ControlParameters from './ControlParameters';
-import StaticObjectControls from './StaticObjectControls';
+// import StaticObjectControls from './StaticObjectControls';
 
 import './ControlPanel.css';
 
 export default function ControlPanel({
 	viewportConfig: cfg,
 	fluidParams: fluid,
-	setFluidParams, setViewportConfig
+	setFluidParams, setViewportConfig, onClearParticles
 }) {
 	return (
 		<div className='ControlPanel' style={{
@@ -26,17 +26,24 @@ export default function ControlPanel({
 					onClick={() => setViewportConfig({ ...cfg, Interactable: !cfg.Interactable })}
 				/>
 
+				<Button 
+					icon={<Trash2 size={20}/>} 
+					type='default'
+					danger
+					onClick={onClearParticles}
+					title="Clear all particles"
+				/>
+
 			</Space>
 			<Collapse defaultActiveKey={['1']} >
+
 				<Collapse.Panel header="Fluid Parameters" key="1">
 					<ControlParameters simParams={fluid} setSimParams={setFluidParams} />
 				</Collapse.Panel>
-				<Collapse.Panel header="Static Objects" key="2">
-					<StaticObjectControls 
-						viewportConfig={cfg} 
-						setViewportConfig={setViewportConfig} 
-					/>
-				</Collapse.Panel>
+
+				{/* <Collapse.Panel header="Static Objects" key="2">
+					<StaticObjectControls viewportConfig={cfg} setViewportConfig={setViewportConfig} />
+				</Collapse.Panel> */}
 			</Collapse>
 		</div>
 	);

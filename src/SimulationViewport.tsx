@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useCallback } from 'react';
+import React, { useEffect, useRef, useCallback, useImperativeHandle, forwardRef } from 'react';
 import * as THREE from 'three';
 import Engine, { FluidParams, StaticCircle, StaticPlane } from './physics/sph';
 import { vec2 } from './physics/util';
@@ -15,7 +15,11 @@ interface SimulationViewportProps extends ViewportConfig {
 	fluidParams: FluidParams;
 }
 
-export default function SimulationViewport({ fluidParams, ...cfg }: SimulationViewportProps) {
+export interface SimulationViewportRef {
+	clearParticles: () => void;
+}
+
+export default forwardRef<SimulationViewportRef, SimulationViewportProps>(function SimulationViewport({ fluidParams, ...cfg }, ref) {
 	const canvasRef = useRef<HTMLDivElement>(null);
 	const sceneRef = useRef<THREE.Scene | null>(null);
 	const cameraRef = useRef<THREE.OrthographicCamera | null>(null);
@@ -71,7 +75,7 @@ export default function SimulationViewport({ fluidParams, ...cfg }: SimulationVi
 		staticMeshes.length = 0;
 
 		// Add meshes for current static objects
-		const staticObjects = Engine.getStaticObjects();
+		const staticObjects = Engine.getStaticColliders();
 		for (const obj of staticObjects) {
 			let geometry: THREE.BufferGeometry;
 			const scale = 30; // Same scale used in the simulation
@@ -139,6 +143,7 @@ export default function SimulationViewport({ fluidParams, ...cfg }: SimulationVi
 		} else if (cfg.ObjectType === 'rectangle') {
 			const width = 3.0;
 			const height = 1.5;
+			// Create a simple static rectangle without particle spawning by default
 			const rect = new StaticPlane(new vec2(x - width/2, y - height/2), new vec2(width, height));
 			Engine.addStaticObject(rect);
 		}
@@ -443,6 +448,15 @@ export default function SimulationViewport({ fluidParams, ...cfg }: SimulationVi
 		doLoop();
 	}, [computeWindowArea, defaultOrientation, setNumParticles, doLoop, fluidParams, updateStaticObjectMeshes]);
 
+	// Expose methods to parent component
+	useImperativeHandle(ref, () => ({
+		clearParticles: () => {
+			Engine.clearParticlesOnly();
+			// Also reset particle count to current fluid params
+			Engine.setNumParticles(fluidParams.NumParticles);
+		}
+	}), [fluidParams.NumParticles]);
+
 	useEffect(() => {
 		isMountedRef.current = true;
 		
@@ -551,4 +565,4 @@ export default function SimulationViewport({ fluidParams, ...cfg }: SimulationVi
 			}}
 		/>
 	);
-}
+});

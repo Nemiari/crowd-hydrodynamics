@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import SimulationViewport from './SimulationViewport';
+import { useState, useRef } from 'react';
+import SimulationViewport, { SimulationViewportRef } from './SimulationViewport';
 import { theme, ConfigProvider, Collapse } from 'antd';
 import { Pause, Pointer } from 'lucide-react';
 
@@ -7,7 +7,7 @@ import ControlPanel from './ui/ControlPanel';
 import { FluidParams } from './physics/sph';
 
 const defaultFluidParams: FluidParams = {
-	NumParticles: 4000,
+	NumParticles: 1000,
 	ParticleMass: 1.0,
 	GasConstant: 5.0,
 	RestDensity: 0.5,
@@ -51,6 +51,11 @@ const uiTheme = {
 export default function App() {
 	const [fluidParams, setFluidParams] = useState(defaultFluidParams);
 	const [viewportConfig, setViewportConfig] = useState(defaultViewportConfig);
+	const simulationRef = useRef<SimulationViewportRef>(null);
+
+	const handleClearParticles = () => {
+		simulationRef.current?.clearParticles();
+	};
 
 	return (
 		<div className='App' style={appCSS}>
@@ -58,9 +63,13 @@ export default function App() {
 				<ControlPanel
 					fluidParams={fluidParams} setFluidParams={setFluidParams}
 					viewportConfig={viewportConfig} setViewportConfig={setViewportConfig}
+					onClearParticles={handleClearParticles}
 				/>
 
-				<SimulationViewport fluidParams={fluidParams} {...viewportConfig}
+				<SimulationViewport 
+					ref={simulationRef}
+					fluidParams={fluidParams} 
+					{...viewportConfig}
 				/>
 			</ConfigProvider>
 		</div>

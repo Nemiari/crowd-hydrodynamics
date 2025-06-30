@@ -4,9 +4,11 @@
 import { Position, dist2, vec2 } from './util';
 import DynamicObject from './DynamicObject';
 import StaticObject, { StaticCircle, StaticPlane } from './StaticObject';
+import ParticleSource, { SpawnSide } from './ParticleSource';
+import ParticleSink, { SinkSide } from './ParticleSink';
 
 export interface FluidParams {
-	NumParticles: number;	// Number of particles in the simulation
+	NumParticles: number;	// Number of particles in the sim		HandleParticleSources(currentTime);
 	ParticleMass: number;	// Mass of each particle
 	GasConstant: number;	// Gas constant for the equation of state
 	RestDensity: number;	// Rest density of the fluid
@@ -41,6 +43,7 @@ let grid!: Grid;
 let particles: Particle[] = [];
 let colliders: StaticObject[] = [];
 let sources: ParticleSource[] = [];
+let sinks: ParticleSink[] = [];
 
 const INIT_MAX_PARTICLES_IN_CELL = 50;
 
@@ -67,19 +70,21 @@ class Particle extends DynamicObject {
 	P:   number; // Pressure
 	rho: number; // Local Density
 
-	constructor() {
+	constructor(pos?: vec2, velocity?: vec2) {
 		// Use safe defaults if bounds not set yet
 		const safeXmin = xmin || 0;
 		const safeXmax = xmax || 10;
 		const safeYmin = ymin || 0;
 		const safeYmax = ymax || 10;
-		
-		super({
+
+		super((pos) ? { x: pos.x, y: pos.y } : {
 			x: Math.random() * (safeXmax - safeXmin) + safeXmin,
 			y: Math.random() * (safeYmax - safeYmin) + safeYmin
 		});
-		this.Vx = Math.random() - 0.5;
-		this.Vy = Math.random() - 0.5;
+
+		this.velocity = (velocity) ? velocity : new vec2(
+			Math.random() - 0.5, Math.random() - 0.5
+		);
 
 		this.P  = 0;
 		this.rho = M * Wpoly6(0);
@@ -111,14 +116,6 @@ class Particle extends DynamicObject {
 		this.rho = M * Wpoly6(0);
 	}
 }
-
-interface ParticleSource {
-	pos: vec2; // Position of the source
-	rate: number; // Rate of particle generation
-	lastSpawnTime: number; // Last time a particle was spawned
-	spawnRadius: number; // Radius around the source position to spawn particles
-}
-
 
 // Grid cell
 class Cell {
@@ -338,29 +335,57 @@ function CalcForcedVelocity(): void {
 	forceVelocityOn = false;
 }
 
-function SpawnParticlesFromSources(currentTime: number): void {
+function HandleParticleSources(currentTime: number): void {
 	for (const source of sources) {
 		const timeSinceLastSpawn = currentTime - source.lastSpawnTime;
 		const spawnInterval = 1000 / source.rate; // Convert rate to milliseconds between spawns
 		
 		if (timeSinceLastSpawn >= spawnInterval) {
-			// Spawn a new particle near the source
-			const angle = Math.random() * 2 * Math.PI;
-			const radius = Math.random() * source.spawnRadius;
-			
-			const spawnX = source.pos.x + Math.cos(angle) * radius;
-			const spawnY = source.pos.y + Math.sin(angle) * radius;
+			let spawnX: number, spawnY: number;
+			let velocityX: number, velocityY: number;
+
+			if (source.direction && source.spawnLength > 0) {
+				// Rectangle/line source - spawn along a line with directional velocity
+				const lineOffset = (Math.random() - 0.5) * source.spawnLength;
+				
+				// Calculate perpendicular vector to spawn direction for line positioning
+				const perpX = -source.direction.y;
+				const perpY = source.direction.x;
+				
+				spawnX = source.pos.x + perpX * lineOffset;
+				spawnY = source.pos.y + perpY * lineOffset;
+				
+				// Add some randomness to spawn position along the direction
+				const directionOffset = (Math.random() - 0.5) * 0.1;
+				spawnX += source.direction.x * directionOffset;
+				spawnY += source.direction.y * directionOffset;
+				
+				// Set initial velocity in the spawn direction with some randomness
+				const velocityMagnitude = source.velocity || 1.0;
+				const velocityRandomness = 0.3;
+				velocityX = source.direction.x * velocityMagnitude * (1 + (Math.random() - 0.5) * velocityRandomness);
+				velocityY = source.direction.y * velocityMagnitude * (1 + (Math.random() - 0.5) * velocityRandomness);
+			} else {
+				// Point source - spawn in a circle
+				const angle = Math.random() * 2 * Math.PI;
+				const radius = Math.random() * source.spawnRadius;
+				
+				spawnX = source.pos.x + Math.cos(angle) * radius;
+				spawnY = source.pos.y + Math.sin(angle) * radius;
+				
+				// Give particles a small initial velocity away from the source
+				const velocityMagnitude = 0.5;
+				velocityX = Math.cos(angle) * velocityMagnitude;
+				velocityY = Math.sin(angle) * velocityMagnitude;
+			}
 			
 			// Check if spawn position is within bounds
 			if (spawnX >= xmin && spawnX <= xmax && spawnY >= ymin && spawnY <= ymax) {
 				const particle = new Particle();
 				particle.x = spawnX;
 				particle.y = spawnY;
-				
-				// Give particles a small initial velocity away from the source
-				const velocityMagnitude = 0.5;
-				particle.Vx = Math.cos(angle) * velocityMagnitude;
-				particle.Vy = Math.sin(angle) * velocityMagnitude;
+				particle.Vx = velocityX;
+				particle.Vy = velocityY;
 				
 				particles.push(particle);
 			}
@@ -371,25 +396,30 @@ function SpawnParticlesFromSources(currentTime: number): void {
 	}
 }
 
-function RemoveOldParticles(maxParticles: number): void {
-	// Remove oldest particles if we exceed the maximum
-	if (particles.length > maxParticles) {
-		const particlesToRemove = particles.length - maxParticles;
-		particles.splice(0, particlesToRemove);
+function HandleParticleSinks(currentTime: number): void {
+	for (const sink of sinks) {
+		const timeSinceLastRemoval = currentTime - sink.lastVanishTime;
+		const removalInterval = 1000 / sink.rate; // Convert rate to milliseconds between removals
+		
+		if (timeSinceLastRemoval >= removalInterval) {
+			// Find particles to remove
+			for (let i = particles.length - 1; i >= 0; i--) {
+				const particle = particles[i];
+				const particlePos = new vec2(particle.x, particle.y);
+				
+				if (sink.shouldRemoveParticle(particlePos)) {
+					// Remove the particle
+					particles.splice(i, 1);
+					sink.lastVanishTime = currentTime;
+					break; // Only remove one particle per sink per interval
+				}
+			}
+		}
 	}
 }
 
 
-
-
 const Engine = {
-	cleanup(): void {
-		particles = [];
-		sources = [];
-		forceVelocityOn = false;
-		if (grid) grid.reset();
-	},
-
 	init(width: number, height: number, left: number, right: number, bottom: number, top: number): void {
 		const xlimit = width  / scale;
 		xmin = left   / scale;
@@ -406,29 +436,43 @@ const Engine = {
 			grid = new Grid();
 			grid.init(nx, ny, xlimit, ylimit);
 		}
-		
-		// If we don't have particles (e.g., after HMR), they will be created by setNumParticles
-		if (particles.length === 0) { particles = []; }
 
-		// Initialize test source if no sources exist
-		if (sources.length === 0) {
-			this.initTestSource();
-		}
+		// Default simulation setup
 
-		// // Add some default objects for demonstration
-		// if (colliders.length === 0) {
-		// 	// Add a circle obstacle in the middle
-		// 	const centerX = xlimit / 2;
-		// 	const centerY = ylimit / 2;
-		// 	const circle = new StaticCircle(new vec2(centerX, centerY), 1.5); // Radius in simulation units
-		// 	colliders.push(circle);
+		// Particle sources
+		const defSources: Array<{ obj: StaticPlane, side: SpawnSide, rate: number, vel: number }> = [
+			{ obj: new StaticPlane(new vec2(0, 10), new vec2(0.2, 3)), side: 'left', rate: 8, vel: 2.0 },
+			{ obj: new StaticPlane(new vec2(0, 15), new vec2(0.2, 3)), side: 'right', rate: 8, vel: 2.0 },
+		];
 
-		// 	// Add a rectangular obstacle
-		// 	const rectX = xlimit * 0.7;
-		// 	const rectY = ylimit * 0.3;
-		// 	const rect = new StaticPlane(new vec2(rectX - 1.5, rectY - 0.75), new vec2(3.0, 1.5)); // Size in simulation units
-		// 	colliders.push(rect);
-		// }
+		defSources.forEach((def) => { this.addStaticObject(def.obj);
+			this.addParticleSourceFromPlane(def.obj, def.side, def.rate, def.vel);
+		});
+
+		// Particle sinks
+		const defSinks: Array<{ obj: StaticPlane, side: SinkSide, rate: number, range: number }> = [
+			{ obj: new StaticPlane(new vec2(15, 1), new vec2(0.2, 3)), side: 'left', rate: 5, range: 0.3 },
+			{ obj: new StaticPlane(new vec2(15, 10), new vec2(0.2, 3)), side: 'right', rate: 5, range: 0.3 },
+		];
+
+		defSinks.forEach((def) => {
+			this.addStaticObject(def.obj);
+			this.addParticleSinkFromPlane(def.obj, def.side, def.rate, def.range);
+		});
+	},
+
+	cleanup(): void {
+		particles = [];
+		sources = [];
+		sinks = [];
+		forceVelocityOn = false;
+		if (grid) grid.reset();
+	},
+
+	clearParticlesOnly(): void {
+		particles = [];
+		forceVelocityOn = false;
+		if (grid) grid.reset();
 	},
 
 	resize(left: number, right: number, bottom: number, top: number): void {
@@ -442,9 +486,7 @@ const Engine = {
 		// Only recreate particles if count changed or if we have no particles
 		if (particles.length !== n) {
 			particles = [];
-			for (let i = 0; i < n; i++) {
-				particles.push(new Particle());
-			}
+			for (let i = 0; i < n; i++) { particles.push(new Particle()) }
 		}
 	},
 
@@ -456,16 +498,13 @@ const Engine = {
 		// Reset grid before physics calculations
 		grid.reset();
 
-		// Spawn particles from sources
-		SpawnParticlesFromSources(currentTime);
+		HandleParticleSources(currentTime);
+		HandleParticleSinks(currentTime)
 
-		// Skip physics if no particles
 		if (particles.length === 0) return;
 
 		// Add all particles to grid first (including newly spawned ones)
-		particles.forEach(p => {
-			grid.addParticleToCell(p);
-		});
+		particles.forEach(p => { grid.addParticleToCell(p) });
 
 		CalcDensity();
 		CalcForces();
@@ -482,7 +521,7 @@ const Engine = {
 		if (i >= particles.length) return;
 		const p = particles[i];
 		out.x = p.x * scale;
-		out.y = p.y * scale; // Fixed: removed incorrect ymin subtraction
+		out.y = p.y * scale;
 	},
 
 	getParticlePressure(i: number): number {
@@ -515,76 +554,112 @@ const Engine = {
 		colliders.push(obj);
 	},
 
-	removeStaticObject(obj: StaticObject): void {
-		const index = colliders.indexOf(obj);
-		if (index !== -1) {
-			colliders.splice(index, 1);
-		}
-	},
-
-	clearStaticObjects(): void {
-		colliders.length = 0;
-	},
-
-	getStaticObjects(): StaticObject[] {
+	getStaticColliders(): StaticObject[] {
 		return [...colliders];
 	},
 
-	// Particle source management
-	addParticleSource(pos: vec2, rate: number, spawnRadius: number = 0.1): void {
-		sources.push({
-			pos: new vec2(pos.x / scale, pos.y / scale), // Convert to simulation coordinates
-			rate: rate,
-			lastSpawnTime: Date.now(),
-			spawnRadius: spawnRadius
-		});
+	clearStaticObjects(): void {
+		colliders = [];
+		// Also clear any sources and sinks that were associated with planes
+		sources = sources.filter(source => source.staticPlane === null);
+		sinks = sinks.filter(sink => sink.staticPlane === null);
 	},
 
-	removeParticleSource(index: number): void {
-		if (index >= 0 && index < sources.length) {
-			sources.splice(index, 1);
-		}
+	addParticleSourceFromPlane(plane: StaticPlane, spawnSide: SpawnSide, rate: number, velocity: number = 1.0): number {
+		const source = new ParticleSource(
+			new vec2(0, 0), // Position will be calculated from plane
+			rate,
+			velocity,
+			plane,
+			spawnSide
+		);
+		sources.push(source);
+		return sources.length - 1; // Return the index of the added source
 	},
 
-	clearParticleSources(): void {
-		sources.length = 0;
+
+	addParticleSource(pos: vec2, direction: vec2, spawnLength: number, rate: number, velocity: number = 1.0): number {
+		const source = new ParticleSource(
+			new vec2(pos.x / scale, pos.y / scale), // Convert to simulation coordinates
+			rate,
+			velocity,
+			null, // No associated plane
+			'none',
+			direction.clone().normalize(), // Ensure direction is normalized
+			spawnLength / scale // Convert to simulation coordinates
+		);
+		sources.push(source);
+		return sources.length - 1; // Return the index of the added source
 	},
 
 	getParticleSources(): ParticleSource[] {
-		return sources.map(source => ({
-			...source,
-			pos: new vec2(source.pos.x * scale, source.pos.y * scale) // Convert back to display coordinates
-		}));
+		return sources.map(source => {
+			// Create a copy with display coordinates for position
+			const sourceCopy = new ParticleSource(
+				new vec2(source.pos.x * scale, source.pos.y * scale), // Convert back to display coordinates
+				source.rate,
+				source.velocity,
+				source.staticPlane,
+				source.spawnSide,
+				source.direction,
+				source.spawnLength * scale // Convert back to display coordinates
+			);
+			sourceCopy.lastSpawnTime = source.lastSpawnTime;
+			return sourceCopy;
+		});
+	},
+
+	addParticleSinkFromPlane(plane: StaticPlane, sinkSide: SinkSide, rate: number, sinkRange: number = 0.5): number {
+		const sink = new ParticleSink(
+			new vec2(0, 0), // Position will be calculated from plane
+			rate,
+			sinkRange,
+			plane,
+			sinkSide
+		);
+		sinks.push(sink);
+		return sinks.length - 1; // Return the index of the added sink
+	},
+
+	addParticleSink(pos: vec2, rate: number, sinkRange: number = 0.5): number {
+		const sink = new ParticleSink(
+			new vec2(pos.x / scale, pos.y / scale), // Convert to simulation coordinates
+			rate,
+			sinkRange,
+			null, // No associated plane
+			'none'
+		);
+		sinks.push(sink);
+		return sinks.length - 1; // Return the index of the added sink
+	},
+
+	getParticleSinks(): ParticleSink[] {
+		return sinks.map(sink => {
+			// Create a copy with display coordinates for position
+			const sinkCopy = new ParticleSink(
+				new vec2(sink.pos.x * scale, sink.pos.y * scale), // Convert back to display coordinates
+				sink.rate,
+				sink.sinkRange * scale, // Convert back to display coordinates
+				sink.staticPlane,
+				sink.sinkSide,
+				sink.sinkLength * scale // Convert back to display coordinates
+			);
+			sinkCopy.lastVanishTime = sink.lastVanishTime;
+			return sinkCopy;
+		});
 	},
 
 	getParticleCount(): number {
 		return particles.length;
 	},
-
-	// Initialize with a test particle source
-	initTestSource(): void {
-		// Clear existing sources first
-		sources = [];
-		
-		// Add a test source in the middle-left of the simulation area
-		const testX = xmin + (xmax - xmin) * 0.2; // 20% from left
-		const testY = ymin + (ymax - ymin) * 0.5; // Middle height
-		
-		sources.push({
-			pos: new vec2(testX, testY),
-			rate: 10, // 10 particles per second
-			lastSpawnTime: Date.now(),
-			spawnRadius: 0.2 // Small spawn radius in simulation units
-		});
-	},
 };
 
 // HMR handling - Reload page when this module is updated
-if ((import.meta as any).hot) {
-	(import.meta as any).hot.accept(() => {
-		window.location.reload();
-	});
-}
+// if ((import.meta as any).hot) {
+(import.meta as any).hot.accept(() => { window.location.reload() });
+// }
 
 export default Engine;
 export { StaticCircle, StaticPlane };
+export type { SpawnSide } from './ParticleSource';
+export type { SinkSide } from './ParticleSink';
