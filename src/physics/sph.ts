@@ -655,9 +655,9 @@ const Engine = {
 };
 
 // HMR handling - Reload page when this module is updated
-// if ((import.meta as any).hot) {
-(import.meta as any).hot.accept(() => { window.location.reload() });
-// }
+if ((import.meta as any).hot) {
+	(import.meta as any).hot.accept(() => { window.location.reload() });
+}
 
 export default Engine;
 export { StaticCircle, StaticPlane };
