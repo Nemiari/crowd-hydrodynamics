@@ -78,8 +78,64 @@ export default forwardRef<SimulationViewportRef, SimulationViewportProps>(functi
 			backgroundMeshRef.current = null;
 		}
 
-		// Background image disabled - using white background from renderer clear color
-		console.log('Background image disabled - using solid white background');
+		// Load the bounds.jpg texture
+		textureLoaderRef.current.load(
+			'bounds.jpg',
+			(texture) => {
+				console.log('Background image loaded successfully:', texture.image.width, 'x', texture.image.height);
+				const dims = dimensionsRef.current;
+				const viewportWidth = dims.right - dims.left;
+				const viewportHeight = dims.top - dims.bottom;
+				
+				// Add padding around the image (as a percentage of viewport size)
+				const paddingPercentage = 0.05; // 5% padding on all sides
+				const availableWidth = viewportWidth * (1 - paddingPercentage * 2);
+				const availableHeight = viewportHeight * (1 - paddingPercentage * 2);
+				
+				// Get the natural dimensions of the image
+				const imageAspectRatio = texture.image.width / texture.image.height;
+				const availableAspectRatio = availableWidth / availableHeight;
+				
+				// Calculate the background plane size to fit the available area without distortion
+				let planeWidth, planeHeight;
+				
+				if (imageAspectRatio > availableAspectRatio) {
+					// Image is wider relative to available area, fit to available width
+					planeWidth = availableWidth;
+					planeHeight = planeWidth / imageAspectRatio;
+				} else {
+					// Image is taller relative to available area, fit to available height
+					planeHeight = availableHeight;
+					planeWidth = planeHeight * imageAspectRatio;
+				}
+
+				// Create background geometry and material
+				const backgroundGeometry = new THREE.PlaneGeometry(planeWidth, planeHeight);
+				const backgroundMaterial = new THREE.MeshBasicMaterial({
+					map: texture,
+					transparent: false,
+					opacity: 1.0
+				});
+
+				// Create and position the background mesh
+				const backgroundMesh = new THREE.Mesh(backgroundGeometry, backgroundMaterial);
+				
+				// Position the background at the center of the viewport and behind everything
+				backgroundMesh.position.set(
+					(dims.left + dims.right) / 2,
+					(dims.bottom + dims.top) / 2,
+					-0.5 // Behind particles and static objects
+				);
+
+				backgroundMeshRef.current = backgroundMesh;
+				scene.add(backgroundMesh);
+				console.log('Background mesh added to scene');
+			},
+			undefined,
+			(error) => {
+				console.warn('Could not load bounds.jpg background image:', error);
+			}
+		);
 	}, []);
 
 
@@ -114,9 +170,9 @@ export default forwardRef<SimulationViewportRef, SimulationViewportProps>(functi
 			}
 
 			const material = new THREE.MeshBasicMaterial({ 
-				color: 0x000000, 
+				color: 0x888888, 
 				transparent: true, 
-				opacity: 1.0,
+				opacity: 0.8,
 				side: THREE.DoubleSide
 			});
 			
@@ -447,20 +503,16 @@ export default forwardRef<SimulationViewportRef, SimulationViewportProps>(functi
 
 		const scene = new THREE.Scene();
 		// Set black background for the scene
-		scene.background = new THREE.Color(0xFFFFFF);
+		scene.background = new THREE.Color(0x000000);
 		sceneRef.current = scene;
 
 		const camera = new THREE.OrthographicCamera(dims.left, dims.right, dims.top, dims.bottom, near, far);
 		camera.position.z = 0.5;
 		cameraRef.current = camera;
 
-		const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+		const renderer = new THREE.WebGLRenderer({ antialias: true });
 		renderer.setSize(width * dims.zoomX, height * dims.zoomY);
-		renderer.setClearColor(0xffffff, 1); // White clear color
-		
-		// Ensure the canvas element itself has a white background
-		renderer.domElement.style.backgroundColor = 'white';
-		
+		renderer.setClearColor(0x000000, 1); // Black clear color
 		rendererRef.current = renderer;
 
 		const material = new THREE.MeshBasicMaterial({ color: 0x4499ff });
@@ -585,6 +637,174 @@ export default forwardRef<SimulationViewportRef, SimulationViewportProps>(functi
 		};
 	}, [handleWindowResize]);
 
+	const clearEditHandles = useCallback((): void => {
+		const scene = sceneRef.current;
+		const editHandles = editHandlesRef.current;
+		
+		if (!scene) return;
+
+		// Remove existing edit handles
+		for (const handle of editHandles) {
+			scene.remove(handle);
+		}
+		editHandles.length = 0;
+	}, []);
+
+	const createEditHandles = useCallback((object: any, meshIndex: number): void => {
+		const scene = sceneRef.current;
+		if (!scene) return;
+
+		console.log('Creating edit handles for object:', object, 'meshIndex:', meshIndex);
+		clearEditHandles();
+		const editHandles = editHandlesRef.current;
+		const scale = 30; // Same scale used in the simulation
+
+		if (object instanceof StaticCircle) {
+			// Create resize handle for circles
+			const handleGeometry = new THREE.SphereGeometry(5);
+			const handleMaterial = new THREE.MeshBasicMaterial({ 
+				color: 0xff4444, 
+				transparent: true, 
+				opacity: 1.0 
+			});
+			const resizeHandle = new THREE.Mesh(handleGeometry, handleMaterial);
+			
+			// Position handle at the edge of the circle
+			const handleX = object.x * scale + object.radius * scale;
+			const handleY = object.y * scale;
+			resizeHandle.position.set(handleX, handleY, 1.0);
+			resizeHandle.userData = { type: 'resize', object, meshIndex };
+			
+			editHandles.push(resizeHandle);
+			scene.add(resizeHandle);
+		} else if (object instanceof StaticPlane) {
+			// Create corner handles for rectangles
+			const handleGeometry = new THREE.SphereGeometry(5);
+			const handleMaterial = new THREE.MeshBasicMaterial({ 
+				color: 0xff4444, 
+				transparent: true, 
+				opacity: 1.0 
+			});
+
+			// Four corner handles
+			const corners = [
+				{ x: object.x, y: object.y, type: 'resize-tl' },
+				{ x: object.x + object.width, y: object.y, type: 'resize-tr' },
+				{ x: object.x + object.width, y: object.y + object.height, type: 'resize-br' },
+				{ x: object.x, y: object.y + object.height, type: 'resize-bl' }
+			];
+
+			corners.forEach(corner => {
+				const handle = new THREE.Mesh(handleGeometry, handleMaterial.clone());
+				handle.position.set(corner.x * scale, corner.y * scale, 1.0);
+				handle.userData = { type: corner.type, object, meshIndex };
+				editHandles.push(handle);
+				scene.add(handle);
+			});
+		}
+
+		// Create delete handle (red X)
+		const deleteGeometry = new THREE.SphereGeometry(6);
+		const deleteMaterial = new THREE.MeshBasicMaterial({ 
+			color: 0xff0000, 
+			transparent: true, 
+			opacity: 1.0 
+		});
+		const deleteHandle = new THREE.Mesh(deleteGeometry, deleteMaterial);
+		
+		// Position delete handle above the object
+		let deleteX, deleteY;
+		if (object instanceof StaticCircle) {
+			deleteX = object.x * scale;
+			deleteY = object.y * scale + object.radius * scale + 20;
+		} else {
+			deleteX = (object.x + object.width / 2) * scale;
+			deleteY = (object.y + object.height) * scale + 20;
+		}
+		
+		deleteHandle.position.set(deleteX, deleteY, 1.0);
+		deleteHandle.userData = { type: 'delete', object, meshIndex };
+		editHandles.push(deleteHandle);
+		scene.add(deleteHandle);
+		
+		console.log('Created', editHandles.length, 'edit handles');
+	}, [clearEditHandles]);
+
+	const selectObject = useCallback((object: any, meshIndex: number): void => {
+		console.log('Selecting object:', object, 'meshIndex:', meshIndex);
+		// Clear previous selection
+		selectedObjectRef.current = null;
+		clearEditHandles();
+
+		// Highlight the selected object
+		const staticMeshes = staticObjectMeshesRef.current;
+		staticMeshes.forEach((mesh, index) => {
+			if (mesh.material && 'color' in mesh.material) {
+				(mesh.material as THREE.MeshBasicMaterial).color.setHex(
+					index === meshIndex ? 0x44ff44 : 0x888888
+				);
+			}
+		});
+
+		// Set selection and create edit handles
+		selectedObjectRef.current = { object, meshIndex };
+		createEditHandles(object, meshIndex);
+	}, [clearEditHandles, createEditHandles]);
+
+	const deselectObject = useCallback((): void => {
+		selectedObjectRef.current = null;
+		clearEditHandles();
+
+		// Reset all object colors
+		const staticMeshes = staticObjectMeshesRef.current;
+		staticMeshes.forEach(mesh => {
+			if (mesh.material && 'color' in mesh.material) {
+				(mesh.material as THREE.MeshBasicMaterial).color.setHex(0x888888);
+			}
+		});
+	}, [clearEditHandles]);
+
+	const findClickedObject = useCallback((screenX: number, screenY: number): { object: any; meshIndex: number } | null => {
+		const camera = cameraRef.current;
+		const scene = sceneRef.current;
+		const rect = canvasRef.current?.getBoundingClientRect();
+		
+		if (!camera || !scene || !rect) return null;
+
+		// Convert screen coordinates to normalized device coordinates
+		const mouse = new THREE.Vector2();
+		mouse.x = ((screenX - rect.left) / rect.width) * 2 - 1;
+		mouse.y = -((screenY - rect.top) / rect.height) * 2 + 1;
+
+		// Create raycaster
+		const raycaster = new THREE.Raycaster();
+		raycaster.setFromCamera(mouse, camera);
+
+		// Check intersections with static object meshes first
+		const staticMeshes = staticObjectMeshesRef.current;
+		const staticIntersects = raycaster.intersectObjects(staticMeshes);
+		
+		if (staticIntersects.length > 0) {
+			const mesh = staticIntersects[0].object as THREE.Mesh;
+			const meshIndex = staticMeshes.indexOf(mesh);
+			if (meshIndex !== -1) {
+				const objects = Engine.getStaticColliders();
+				return { object: objects[meshIndex], meshIndex };
+			}
+		}
+
+		// Check intersections with edit handles
+		const editHandles = editHandlesRef.current;
+		const handleIntersects = raycaster.intersectObjects(editHandles);
+		
+		if (handleIntersects.length > 0) {
+			const handle = handleIntersects[0].object as THREE.Mesh;
+			return { object: handle.userData, meshIndex: -1 }; // -1 indicates it's a handle
+		}
+
+		return null;
+	}, []);
+
 	const handleMouseClick = useCallback((e: MouseEvent): void => {
 		// Handle circle creation (immediate)
 		if (cfg.AddingObjects && cfg.ObjectType === 'circle') {
@@ -621,6 +841,58 @@ export default forwardRef<SimulationViewportRef, SimulationViewportProps>(functi
 		}
 	}, [cfg.AddingObjects, cfg.ObjectType]);
 
+	const handleMouseDrag = useCallback((e: MouseEvent): void => {
+		if (!cfg.EditingObjects || !isDraggingRef.current || !dragStartRef.current || !selectedObjectRef.current) return;
+
+		const rect = canvasRef.current?.getBoundingClientRect();
+		if (!rect) return;
+
+		const deltaX = (e.clientX - dragStartRef.current.x) / 30; // Scale to simulation coordinates
+		const deltaY = -(e.clientY - dragStartRef.current.y) / 30; // Flip Y and scale
+
+		const { object, meshIndex } = selectedObjectRef.current;
+
+		if (meshIndex === -1) {
+			// Dragging a handle (resize)
+			const handleData = object;
+			const targetObject = handleData.object;
+
+			if (handleData.type.startsWith('resize')) {
+				if (targetObject instanceof StaticCircle) {
+					// Resize circle by adjusting radius
+					const currentPos = new vec2(targetObject.x, targetObject.y);
+					const newRadius = Math.max(0.5, targetObject.radius + deltaX); // Minimum radius
+					targetObject.geometry = new THREE.CircleBufferGeometry(newRadius, 32);
+				} else if (targetObject instanceof StaticPlane && handleData.type === 'resize-br') {
+					// Only handle bottom-right corner for simplicity
+					const newWidth = Math.max(1.0, targetObject.width + deltaX);
+					const newHeight = Math.max(1.0, targetObject.height + deltaY);
+					targetObject.geometry = new THREE.PlaneBufferGeometry(newWidth, newHeight);
+				}
+			}
+		} else {
+			// Dragging the object itself (move)
+			if (object instanceof StaticCircle) {
+				object.x += deltaX;
+				object.y += deltaY;
+			} else if (object instanceof StaticPlane) {
+				object.x += deltaX;
+				object.y += deltaY;
+			}
+		}
+
+		// Update visual representation
+		updateStaticObjectMeshes();
+		
+		// Update edit handles if we have a selected object
+		if (selectedObjectRef.current && selectedObjectRef.current.meshIndex !== -1) {
+			createEditHandles(selectedObjectRef.current.object, selectedObjectRef.current.meshIndex);
+		}
+
+		// Update drag start position for next frame
+		dragStartRef.current = { x: e.clientX, y: e.clientY };
+	}, [cfg.EditingObjects, updateStaticObjectMeshes, createEditHandles]);
+
 	const handleMouseUp = useCallback((e: MouseEvent): void => {
 		// Finish rectangle creation
 		if (isCreatingRectRef.current && cfg.AddingObjects && cfg.ObjectType === 'rectangle') {
@@ -656,13 +928,30 @@ export default forwardRef<SimulationViewportRef, SimulationViewportProps>(functi
 		}
 	}, [cfg.AddingObjects, cfg.ObjectType, updateStaticObjectMeshes]);
 
+	// Update mouse move handler to support dragging
+	const handleMouseMoveUpdated = useCallback((e: MouseEvent): void => {
+		if (isDraggingRef.current) {
+			handleMouseDrag(e);
+			return;
+		}
+
+		if (!cfg.Interactable || cfg.AddingObjects || cfg.EditingObjects) return;
+
+		const dims = dimensionsRef.current;
+		if (dims.windowMovementInterval !== -1) {
+			clearInterval(dims.windowMovementInterval);
+			dims.windowMovementInterval = -1;
+		}
+		Engine.forceVelocity(e.clientX + dims.left, e.clientY, e.movementX, e.movementY);
+	}, [cfg.Interactable, cfg.AddingObjects, cfg.EditingObjects, handleMouseDrag]);
+
 	// Separate effect to manage mouse and touch event listeners based on interaction state
 	useEffect(() => {
 		const renderer = rendererRef.current;
 		if (!renderer) return;
 
 		// Remove existing listeners
-		renderer.domElement.removeEventListener('mousemove', handleMouseMove);
+		renderer.domElement.removeEventListener('mousemove', handleMouseMoveUpdated);
 		renderer.domElement.removeEventListener('mousedown', handleMouseDown);
 		renderer.domElement.removeEventListener('mouseup', handleMouseUp);
 		renderer.domElement.removeEventListener('click', handleMouseClick);

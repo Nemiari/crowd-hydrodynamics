@@ -1,10 +1,11 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import SimulationViewport, { SimulationViewportRef } from './SimulationViewport';
-import { theme, ConfigProvider, Collapse } from 'antd';
-import { Pause, Pointer } from 'lucide-react';
+import { theme, ConfigProvider } from 'antd';
+import { message } from 'antd';
 
 import ControlPanel from './ui/ControlPanel';
 import { FluidParams } from './physics/sph';
+import Engine from './physics/sph';
 
 const defaultFluidParams: FluidParams = {
 	NumParticles: 1000,
@@ -18,7 +19,7 @@ const defaultViewportConfig = {
 	Interactable: true,
 	Paused: false,
 	AddingObjects: false,
-	ObjectType: 'circle' as const,
+	ObjectType: 'rectangle' as const,
 };
 
 const appCSS = {
@@ -56,6 +57,42 @@ export default function App() {
 	const handleClearParticles = () => {
 		simulationRef.current?.clearParticles();
 	};
+
+	const handleUndoLastObject = () => {
+		const colliders = Engine.getStaticColliders();
+		
+		if (colliders.length === 0) {
+			message.warning('No objects to undo');
+			return;
+		}
+
+		// Get the last object and remove it
+		const lastObject = colliders[colliders.length - 1];
+		const success = Engine.removeStaticObject(lastObject);
+		
+		if (success) {
+			message.success('Last object removed');
+		} else {
+			message.error('Failed to remove last object');
+		}
+	};
+
+	// Add keyboard shortcut for undo (Ctrl+Z or Cmd+Z)
+	useEffect(() => {
+		const handleKeyDown = (event: KeyboardEvent) => {
+			// Check for Ctrl+Z (Windows/Linux) or Cmd+Z (Mac)
+			if ((event.ctrlKey || event.metaKey) && event.key === 'z' && !event.shiftKey) {
+				event.preventDefault();
+				handleUndoLastObject();
+			}
+		};
+
+		window.addEventListener('keydown', handleKeyDown);
+		
+		return () => {
+			window.removeEventListener('keydown', handleKeyDown);
+		};
+	}, []);
 
 	return (
 		<div className='App' style={appCSS}>

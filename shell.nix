@@ -1,9 +1,13 @@
 { pkgs ? import <nixpkgs> {} }:
 
 pkgs.mkShell {
-	packages = [
-		pkgs.nodejs
-	];
+	packages = (with pkgs; [
+		nodejs
+		opencv
+	] ++ (with python313Packages; [
+		opencv-python
+		numpy
+	]));
 
 	shellHook = ''
 		if [ ! -d "node_modules" ]; then

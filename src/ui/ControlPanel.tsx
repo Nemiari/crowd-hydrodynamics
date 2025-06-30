@@ -2,7 +2,7 @@ import { Button, Space, Collapse } from 'antd';
 import { Pause, Play, Pointer, Trash2 } from 'lucide-react';
 
 import ControlParameters from './ControlParameters';
-// import StaticObjectControls from './StaticObjectControls';
+import StaticObjectControls from './StaticObjectControls';
 
 import './ControlPanel.css';
 
@@ -41,9 +41,9 @@ export default function ControlPanel({
 					<ControlParameters simParams={fluid} setSimParams={setFluidParams} />
 				</Collapse.Panel>
 
-				{/* <Collapse.Panel header="Static Objects" key="2">
+				<Collapse.Panel header="Static Objects" key="2">
 					<StaticObjectControls viewportConfig={cfg} setViewportConfig={setViewportConfig} />
-				</Collapse.Panel> */}
+				</Collapse.Panel>
 			</Collapse>
 		</div>
 	);

@@ -439,9 +439,73 @@ const Engine = {
 
 		// Default simulation setup
 
+// Static colliders preset
+const presetColliders = [
+  new StaticPlane(new vec2(0.00, 10.00), new vec2(0.20, 3.00)),
+  new StaticPlane(new vec2(0.00, 15.00), new vec2(0.20, 3.00)),
+  new StaticPlane(new vec2(15.00, 1.00), new vec2(0.20, 3.00)),
+  new StaticPlane(new vec2(3.67, 11.87), new vec2(21.23, 1.90)),
+  new StaticPlane(new vec2(11.77, 13.00), new vec2(7.50, 1.17)),
+  new StaticPlane(new vec2(10.93, 15.87), new vec2(5.77, 4.73)),
+  new StaticPlane(new vec2(3.70, 22.43), new vec2(10.23, 2.67)),
+  new StaticPlane(new vec2(2.20, 12.77), new vec2(2.50, 12.10)),
+  new StaticPlane(new vec2(12.53, 23.20), new vec2(3.43, 6.13)),
+  new StaticPlane(new vec2(15.70, 28.10), new vec2(1.83, 3.23)),
+  new StaticPlane(new vec2(17.47, 29.83), new vec2(8.57, 1.70)),
+  new StaticPlane(new vec2(23.67, 26.03), new vec2(2.37, 4.03)),
+  new StaticPlane(new vec2(22.30, 23.77), new vec2(3.67, 2.37)),
+  new StaticPlane(new vec2(22.60, 19.47), new vec2(3.33, 4.30)),
+  new StaticPlane(new vec2(19.53, 15.73), new vec2(3.43, 4.57)),
+  new StaticPlane(new vec2(22.63, 15.67), new vec2(24.33, 4.23)),
+  new StaticPlane(new vec2(26.43, 12.40), new vec2(16.07, 1.50)),
+  new StaticPlane(new vec2(26.40, 11.43), new vec2(2.40, 1.47)),
+  new StaticPlane(new vec2(22.60, 4.03), new vec2(2.17, 7.83)),
+  new StaticPlane(new vec2(24.27, 3.40), new vec2(13.07, 1.33)),
+  new StaticPlane(new vec2(26.47, 4.47), new vec2(2.50, 1.80)),
+  new StaticPlane(new vec2(31.80, 6.70), new vec2(5.17, 4.40)),
+  new StaticPlane(new vec2(40.50, 3.53), new vec2(1.97, 9.33)),
+  new StaticPlane(new vec2(0.00, 10.00), new vec2(0.20, 3.00)),
+  new StaticPlane(new vec2(0.00, 15.00), new vec2(0.20, 3.00)),
+  new StaticPlane(new vec2(15.00, 1.00), new vec2(0.20, 3.00)),
+  new StaticPlane(new vec2(15.00, 10.00), new vec2(0.20, 3.00)),
+  new StaticPlane(new vec2(46.30, 11.80), new vec2(1.70, 6.10)),
+  new StaticPlane(new vec2(47.63, 12.57), new vec2(7.53, 1.83)),
+  new StaticPlane(new vec2(42.20, 3.40), new vec2(12.33, 1.23)),
+  new StaticPlane(new vec2(48.73, 6.67), new vec2(6.50, 4.33)),
+  new StaticPlane(new vec2(0.00, 10.00), new vec2(0.20, 3.00)),
+  new StaticPlane(new vec2(0.00, 15.00), new vec2(0.20, 3.00)),
+  new StaticPlane(new vec2(15.00, 1.00), new vec2(0.20, 3.00)),
+  new StaticPlane(new vec2(15.00, 10.00), new vec2(0.20, 3.00)),
+  new StaticPlane(new vec2(25.53, 19.50), new vec2(32.47, 16.50)),
+  new StaticPlane(new vec2(46.67, 12.70), new vec2(11.30, 7.40)),
+  new StaticPlane(new vec2(36.87, 0.03), new vec2(3.93, 12.93)),
+  new StaticPlane(new vec2(0.00, 10.00), new vec2(0.20, 3.00)),
+  new StaticPlane(new vec2(0.00, 15.00), new vec2(0.20, 3.00)),
+  new StaticPlane(new vec2(15.00, 1.00), new vec2(0.20, 3.00)),
+  new StaticPlane(new vec2(15.00, 10.00), new vec2(0.20, 3.00)),
+  new StaticPlane(new vec2(0.00, 0.03), new vec2(24.70, 13.67)),
+  new StaticPlane(new vec2(24.13, 0.03), new vec2(33.40, 3.67)),
+  new StaticPlane(new vec2(54.40, 0.03), new vec2(3.60, 35.97)),
+  new StaticPlane(new vec2(0.00, 30.87), new vec2(26.30, 5.13)),
+  new StaticPlane(new vec2(0.10, 23.33), new vec2(15.67, 7.87)),
+  new StaticPlane(new vec2(0.00, 12.47), new vec2(2.63, 11.20)),
+  new StaticPlane(new vec2(0.00, 22.87), new vec2(0.60, 8.93)),
+  new StaticPlane(new vec2(0.00, 10.00), new vec2(0.20, 3.00)),
+  new StaticPlane(new vec2(0.00, 15.00), new vec2(0.20, 3.00)),
+  new StaticPlane(new vec2(15.00, 1.00), new vec2(0.20, 3.00)),
+  new StaticPlane(new vec2(15.00, 10.00), new vec2(0.20, 3.00)),
+  new StaticPlane(new vec2(0.00, 0.03), new vec2(59.00, 1.47)),
+  new StaticPlane(new vec2(56.97, 0.03), new vec2(6.87, 35.97))
+];
+
+// To use this preset, call:
+presetColliders.forEach(collider => Engine.addStaticObject(collider));
+
+
+
 		// Particle sources
 		const defSources: Array<{ obj: StaticPlane, side: SpawnSide, rate: number, vel: number }> = [
-			{ obj: new StaticPlane(new vec2(0, 10), new vec2(0.2, 3)), side: 'left', rate: 8, vel: 2.0 },
+			{ obj: new StaticPlane(new vec2(0, 10), new vec2(0.2, 3)), side: 'right', rate: 8, vel: 2.0 },
 			{ obj: new StaticPlane(new vec2(0, 15), new vec2(0.2, 3)), side: 'right', rate: 8, vel: 2.0 },
 		];
 
@@ -552,6 +616,20 @@ const Engine = {
 	// Static object management
 	addStaticObject(obj: StaticObject): void {
 		colliders.push(obj);
+	},
+
+	removeStaticObject(obj: StaticObject): boolean {
+		const index = colliders.indexOf(obj);
+		if (index > -1) {
+			colliders.splice(index, 1);
+			// Also remove any sources and sinks that were associated with this object
+			if (obj instanceof StaticPlane) {
+				sources = sources.filter(source => source.staticPlane !== obj);
+				sinks = sinks.filter(sink => sink.staticPlane !== obj);
+			}
+			return true;
+		}
+		return false;
 	},
 
 	getStaticColliders(): StaticObject[] {
