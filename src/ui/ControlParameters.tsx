@@ -32,10 +32,6 @@ export default function ControlParameters({ simParams, setSimParams }) {
 				value={simParams.ParticleMass} min={1} max={10} step={0.5}
 				onChange={(v) => setSimParams({ ...simParams, ParticleMass: v })}
 			/>
-			<Parameter label="Particles" integer
-				value={simParams.NumParticles} min={100} max={5000} step={100}
-				onChange={(v) => setSimParams({ ...simParams, NumParticles: v })}
-			/>
 		</div>
 	);
 }

@@ -29,6 +29,8 @@ export default forwardRef<SimulationViewportRef, SimulationViewportProps>(functi
 	const arrowRef = useRef<THREE.BufferGeometry>(new THREE.CircleBufferGeometry(5, 3));
 	const meshesRef = useRef<THREE.Mesh[]>([]);
 	const staticObjectMeshesRef = useRef<THREE.Mesh[]>([]);
+	const sourcesMeshesRef = useRef<THREE.Mesh[]>([]);
+	const sinksMeshesRef = useRef<THREE.Mesh[]>([]);
 	const selectedObjectRef = useRef<{ object: any; meshIndex: number } | null>(null);
 	const isDraggingRef = useRef<boolean>(false);
 	const dragStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -38,6 +40,10 @@ export default forwardRef<SimulationViewportRef, SimulationViewportProps>(functi
 	const isMountedRef = useRef<boolean>(true);
 	const backgroundMeshRef = useRef<THREE.Mesh | null>(null);
 	const textureLoaderRef = useRef<THREE.TextureLoader>(new THREE.TextureLoader());
+	
+	// Geometries for sources and sinks
+	const sourceGeometryRef = useRef<THREE.BufferGeometry>(new THREE.PlaneBufferGeometry(0.3, 3));
+	const sinkGeometryRef = useRef<THREE.BufferGeometry>(new THREE.PlaneBufferGeometry(0.5, 8));
 	
 	const dimensionsRef = useRef({
 		left: 0,
@@ -80,6 +86,76 @@ export default forwardRef<SimulationViewportRef, SimulationViewportProps>(functi
 
 		// Background image disabled - using white background from renderer clear color
 		console.log('Background image disabled - using solid white background');
+	}, []);
+
+	const updateSourcesAndSinksMeshes = useCallback((): void => {
+		const scene = sceneRef.current;
+		if (!scene) return;
+
+		// Remove existing source meshes
+		for (const mesh of sourcesMeshesRef.current) {
+			scene.remove(mesh);
+		}
+		sourcesMeshesRef.current.length = 0;
+
+		// Remove existing sink meshes
+		for (const mesh of sinksMeshesRef.current) {
+			scene.remove(mesh);
+		}
+		sinksMeshesRef.current.length = 0;
+
+		const scale = 30; // Same scale used in the simulation
+
+		// Add meshes for sources
+		const sources = Engine.getParticleSources();
+		for (const source of sources) {
+			const material = new THREE.MeshBasicMaterial({ 
+				color: 0x00ff00, // Green color for sources
+				transparent: true, 
+				opacity: 0.8,
+				side: THREE.DoubleSide
+			});
+			
+			const mesh = new THREE.Mesh(sourceGeometryRef.current, material);
+			
+			// Position the mesh at the source position
+			mesh.position.set(source.pos.x, source.pos.y, 0.1);
+			
+			// Rotate to point in spawn direction if applicable
+			if (source.spawnSide !== 'none' && source.direction) {
+				const angle = Math.atan2(source.direction.y, source.direction.x) - Math.PI / 2; // Cone points up by default
+				mesh.rotation.z = angle;
+			}
+			
+			// Scale the mesh
+			mesh.scale.setScalar(scale * 0.5);
+			
+			sourcesMeshesRef.current.push(mesh);
+			scene.add(mesh);
+		}
+
+		// Add meshes for sinks
+		const sinks = Engine.getParticleSinks();
+		for (const sink of sinks) {
+			const material = new THREE.MeshBasicMaterial({ 
+				color: 0xff0000, // Red color for sinks
+				transparent: true, 
+				opacity: 0.8,
+				side: THREE.DoubleSide
+			});
+			
+			const mesh = new THREE.Mesh(sinkGeometryRef.current, material);
+			
+			// Position the mesh at the sink position
+			mesh.position.set(sink.pos.x, sink.pos.y, 0.1);
+			
+			// Scale the mesh based on sink range
+			const sinkScale = sink.sinkRange * scale;
+			mesh.scale.setScalar(sinkScale);
+			
+			sinksMeshesRef.current.push(mesh);
+			scene.add(mesh);
+		}
 	}, []);
 
 
@@ -150,7 +226,10 @@ export default forwardRef<SimulationViewportRef, SimulationViewportProps>(functi
 				// clearEditHandles(); - will be handled later
 			}
 		}
-	}, []);
+
+		// Also update sources and sinks meshes when static objects change
+		updateSourcesAndSinksMeshes();
+	}, [updateSourcesAndSinksMeshes]);
 
 	const handleMouseMove = useCallback((e: MouseEvent): void => {
 		// Handle rectangle creation dragging
@@ -351,7 +430,7 @@ export default forwardRef<SimulationViewportRef, SimulationViewportProps>(functi
 	}, []);
 
 	const doLoop = useCallback((): void => {
-		if (!isMountedRef.current) return;
+		// if (!isMountedRef.current) return;
 		
 		const scene = sceneRef.current;
 		const camera = cameraRef.current;
@@ -407,6 +486,9 @@ export default forwardRef<SimulationViewportRef, SimulationViewportProps>(functi
 					}
 				}
 			}
+
+			// Update sources and sinks meshes (they may change position or be added/removed)
+			updateSourcesAndSinksMeshes();
 		}
 		
 		// Always render the scene, even when paused
@@ -415,7 +497,7 @@ export default forwardRef<SimulationViewportRef, SimulationViewportProps>(functi
 		if (isMountedRef.current) {
 			animationIdRef.current = requestAnimationFrame(doLoop);
 		}
-	}, [cfg.Paused]);
+	}, [cfg.Paused, updateSourcesAndSinksMeshes]);
 
 	// Add debugging effect to track pause state changes
 	useEffect(() => {
@@ -493,8 +575,9 @@ export default forwardRef<SimulationViewportRef, SimulationViewportProps>(functi
 		setNumParticles(fluidParams.NumParticles);
 		Engine.setFluidProperties(fluidParams);
 		updateStaticObjectMeshes();
+		updateSourcesAndSinksMeshes();
 		doLoop();
-	}, [createScene, attachToDocument, setNumParticles, doLoop, fluidParams, updateStaticObjectMeshes]);
+	}, [createScene, attachToDocument, setNumParticles, doLoop, fluidParams, updateStaticObjectMeshes, updateSourcesAndSinksMeshes]);
 
 	const reinit = useCallback((): void => {
 		const dims = dimensionsRef.current;
@@ -508,9 +591,10 @@ export default forwardRef<SimulationViewportRef, SimulationViewportProps>(functi
 		Engine.setFluidProperties(fluidParams);
 		setNumParticles(fluidParams.NumParticles);
 		updateStaticObjectMeshes();
+		updateSourcesAndSinksMeshes();
 		createBackground();
 		doLoop();
-	}, [computeWindowArea, defaultOrientation, setNumParticles, doLoop, fluidParams, updateStaticObjectMeshes, createBackground]);
+	}, [computeWindowArea, defaultOrientation, setNumParticles, doLoop, fluidParams, updateStaticObjectMeshes, updateSourcesAndSinksMeshes, createBackground]);
 
 	// Expose methods to parent component
 	useImperativeHandle(ref, () => ({

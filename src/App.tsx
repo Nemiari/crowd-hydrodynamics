@@ -8,7 +8,7 @@ import { FluidParams } from './physics/sph';
 import Engine from './physics/sph';
 
 const defaultFluidParams: FluidParams = {
-	NumParticles: 1000,
+	NumParticles: 0,
 	ParticleMass: 1.0,
 	GasConstant: 5.0,
 	RestDensity: 0.5,
