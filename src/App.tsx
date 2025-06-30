@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import SimulationViewport from './SimulationViewport';
 import { theme, ConfigProvider, Collapse } from 'antd';
-import { Pointer } from 'lucide-react';
+import { Pause, Pointer } from 'lucide-react';
 
 import ControlPanel from './ui/ControlPanel';
 import { FluidParams } from './physics/sph';
@@ -16,6 +16,9 @@ const defaultFluidParams: FluidParams = {
 
 const defaultViewportConfig = {
 	Interactable: true,
+	Paused: false,
+	AddingObjects: false,
+	ObjectType: 'circle' as const,
 };
 
 const appCSS = {

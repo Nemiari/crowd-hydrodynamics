@@ -3,6 +3,7 @@
 
 import { Position, dist2, vec2 } from './util';
 import DynamicObject from './DynamicObject';
+import StaticObject, { StaticCircle, StaticPlane } from './StaticObject';
 
 export interface FluidParams {
 	NumParticles: number;	// Number of particles in the simulation
@@ -35,13 +36,11 @@ function Wvisc_lapl(r: number): number {
 }
 
 
-
-
-
 // Simulation state
 let grid!: Grid;
 let particles: Particle[] = [];
 let colliders: StaticObject[] = [];
+let sources: ParticleSource[] = [];
 
 const INIT_MAX_PARTICLES_IN_CELL = 50;
 
@@ -50,22 +49,16 @@ let K    = 150;  // Gas constant
 let RHO0 = 0.5;   // Rest density
 let MU   = 3;   // Viscosity
 
-// let gx = 0;
-// let gy = 0;
-
 // Domain boundaries
-let xmin = 0;
-let xmax = 0;
-let ymin = 0;
-let ymax = 0;
+let [xmin, ymin] = [0, 0];
+let [xmax, ymax] = [0, 0];
 
 let scale = 30;
 let gridCellSize = h;
 
-let forceVelocityCell: Cell | undefined | null = null;
 let forceVelocityOn = false;
-let forceVx = 0;
-let forceVy = 0;
+let [forceVx, forceVy] = [0, 0];
+let forceVelocityCell: Cell | undefined | null = null;
 
 
 
@@ -75,9 +68,15 @@ class Particle extends DynamicObject {
 	rho: number; // Local Density
 
 	constructor() {
+		// Use safe defaults if bounds not set yet
+		const safeXmin = xmin || 0;
+		const safeXmax = xmax || 10;
+		const safeYmin = ymin || 0;
+		const safeYmax = ymax || 10;
+		
 		super({
-			x: Math.random() * (xmax - xmin) + xmin,
-			y: Math.random() * (ymax - ymin) + ymin
+			x: Math.random() * (safeXmax - safeXmin) + safeXmin,
+			y: Math.random() * (safeYmax - safeYmin) + safeYmin
 		});
 		this.Vx = Math.random() - 0.5;
 		this.Vy = Math.random() - 0.5;
@@ -89,39 +88,18 @@ class Particle extends DynamicObject {
 	}
 
 	update(dt: number): void {
-		// const Ax = this.Fx / this.rho /* + gx */;
-		// const Ay = this.Fy / this.rho /* + gy */;
 		const a = new vec2(this.Fx / this.rho, this.Fy / this.rho);
 
-		// this.Vx += Ax * dt;
-		// this.Vy += Ay * dt;
 		this.velocity.addScaledVector(a, dt);
-
-		// this.velocity.addScaledVector(new vec2(0.3, -5.3), dt);
-
 		this.velocity.clampLength(0, 10); // Limit max speed
+		this.position.addScaledVector(this.velocity, dt);
 
 		// this.x  += (this.Vx + 0.5 * Ax * dt) * dt;
 		// this.y  += (this.Vy + 0.5 * Ay * dt) * dt;
-		this.position.addScaledVector(this.velocity, dt);
 		// this.position.addScaledVector(this.velocity.addScaledVector(a, dt/2), dt);
 
-
-		// boundary collisions
-		if (this.x < xmin) {
-			this.x  = xmin + 1e-6;
-			this.Vx *= -0.5;
-		} else if (this.x > xmax) {
-			this.x  = xmax - 1e-6;
-			this.Vx *= -0.5;
-		}
-		if (this.y < ymin) {
-			this.y  = ymin + 1e-6;
-			this.Vy *= -0.5;
-		} else if (this.y > ymax) {
-			this.y  = ymax - 1e-6;
-			this.Vy *= -0.5;
-		}
+		HandleObstacleCollisions(this);
+		HandleBoundaryCollisions(this);
 
 		grid.addParticleToCell(this);
 		this.reset();
@@ -133,6 +111,14 @@ class Particle extends DynamicObject {
 		this.rho = M * Wpoly6(0);
 	}
 }
+
+interface ParticleSource {
+	pos: vec2; // Position of the source
+	rate: number; // Rate of particle generation
+	lastSpawnTime: number; // Last time a particle was spawned
+	spawnRadius: number; // Radius around the source position to spawn particles
+}
+
 
 // Grid cell
 class Cell {
@@ -264,27 +250,61 @@ function AddForces(p1: Particle, p2: Particle): void {
 	}
 }
 
-// Wall collisions
-function AddWallForces(p1: Particle): void {
-	if (p1.x < xmin + h) {
-		const r = p1.x - xmin;
-		p1.Fx -= (M * p1.P / p1.rho) * Wspiky_grad2(r) * r;
-	} else if (p1.x > xmax - h) {
-		const r = xmax - p1.x;
-		p1.Fx += (M * p1.P / p1.rho) * Wspiky_grad2(r) * r;
-	}
-
-	if (p1.y < ymin + h) {
-		const r = p1.y - ymin;
-		p1.Fy -= (M * p1.P / p1.rho) * Wspiky_grad2(r) * r;
-	} else if (p1.y > ymax - h) {
-		const r = ymax - p1.y;
-		p1.Fy += (M * p1.P / p1.rho) * Wspiky_grad2(r) * r;
+function HandleObstacleCollisions(p1: Particle): void {
+	for (const collider of colliders) {
+		const distance = collider.distanceTo(new vec2(p1.x, p1.y));
+		
+		// If particle is inside obstacle, push it out immediately
+		if (distance < 0) {
+			// Calculate surface normal using finite differences
+			const eps = 1e-4;
+			const dx = (collider.distanceTo(new vec2(p1.x + eps, p1.y)) - distance) / eps;
+			const dy = (collider.distanceTo(new vec2(p1.x, p1.y + eps)) - distance) / eps;
+			
+			// Normalize the gradient (surface normal pointing away from obstacle)
+			const gradMag = Math.sqrt(dx * dx + dy * dy) + eps;
+			const nx = dx / gradMag;
+			const ny = dy / gradMag;
+			
+			// Push particle out to surface + small margin to avoid sticking
+			const correctionDistance = -distance + 0.01;
+			
+			p1.x += nx * correctionDistance;
+			p1.y += ny * correctionDistance;
+			
+			// Calculate velocity components
+			const normalVel = p1.Vx * nx + p1.Vy * ny;
+			const tangentVx = p1.Vx - normalVel * nx;
+			const tangentVy = p1.Vy - normalVel * ny;
+			
+			// Remove normal velocity component and apply friction to tangent
+			const friction = 0.8; // Friction coefficient (0 = no friction, 1 = full friction)
+			if (normalVel < 0) { // Moving towards surface
+				p1.Vx = tangentVx * friction;
+				p1.Vy = tangentVy * friction;
+			}
+		}
 	}
 }
 
-function AddObstacleForces(p1: Particle): void {
-	// Implement obstacle forces here
+function HandleBoundaryCollisions(p1: Particle): void {
+	const boundaryMargin = 0.1; // Small margin from boundaries
+	
+	if (p1.x < xmin + boundaryMargin) {
+		p1.x = xmin + boundaryMargin;
+		if (p1.Vx < 0) p1.Vx = -p1.Vx * 0.3; // Small bounce away from wall
+	} else if (p1.x > xmax - boundaryMargin) {
+		p1.x = xmax - boundaryMargin;
+		if (p1.Vx > 0) p1.Vx = -p1.Vx * 0.3; // Small bounce away from wall
+	}
+	
+	if (p1.y < ymin + boundaryMargin) {
+		p1.y = ymin + boundaryMargin;
+		if (p1.Vy < 0) p1.Vy = -p1.Vy * 0.3; // Small bounce away from wall
+	} else if (p1.y > ymax - boundaryMargin) {
+		p1.y = ymax - boundaryMargin;
+		if (p1.Vy > 0) p1.Vy = -p1.Vy * 0.3; // Small bounce away from wall
+	}
 }
 
 // Accumulate all forces
@@ -302,10 +322,6 @@ function CalcForces(): void {
 					AddForces(p1, nb.particles[j]);
 				}
 			}
-
-			// Static colliders
-			AddWallForces(p1);
-			// AddObstacleForces(p1);
 		}
 	}
 }
@@ -322,12 +338,54 @@ function CalcForcedVelocity(): void {
 	forceVelocityOn = false;
 }
 
+function SpawnParticlesFromSources(currentTime: number): void {
+	for (const source of sources) {
+		const timeSinceLastSpawn = currentTime - source.lastSpawnTime;
+		const spawnInterval = 1000 / source.rate; // Convert rate to milliseconds between spawns
+		
+		if (timeSinceLastSpawn >= spawnInterval) {
+			// Spawn a new particle near the source
+			const angle = Math.random() * 2 * Math.PI;
+			const radius = Math.random() * source.spawnRadius;
+			
+			const spawnX = source.pos.x + Math.cos(angle) * radius;
+			const spawnY = source.pos.y + Math.sin(angle) * radius;
+			
+			// Check if spawn position is within bounds
+			if (spawnX >= xmin && spawnX <= xmax && spawnY >= ymin && spawnY <= ymax) {
+				const particle = new Particle();
+				particle.x = spawnX;
+				particle.y = spawnY;
+				
+				// Give particles a small initial velocity away from the source
+				const velocityMagnitude = 0.5;
+				particle.Vx = Math.cos(angle) * velocityMagnitude;
+				particle.Vy = Math.sin(angle) * velocityMagnitude;
+				
+				particles.push(particle);
+			}
+			
+			// Update spawn time regardless of whether particle was created
+			source.lastSpawnTime = currentTime;
+		}
+	}
+}
+
+function RemoveOldParticles(maxParticles: number): void {
+	// Remove oldest particles if we exceed the maximum
+	if (particles.length > maxParticles) {
+		const particlesToRemove = particles.length - maxParticles;
+		particles.splice(0, particlesToRemove);
+	}
+}
+
 
 
 
 const Engine = {
 	cleanup(): void {
 		particles = [];
+		sources = [];
 		forceVelocityOn = false;
 		if (grid) grid.reset();
 	},
@@ -351,6 +409,26 @@ const Engine = {
 		
 		// If we don't have particles (e.g., after HMR), they will be created by setNumParticles
 		if (particles.length === 0) { particles = []; }
+
+		// Initialize test source if no sources exist
+		if (sources.length === 0) {
+			this.initTestSource();
+		}
+
+		// // Add some default objects for demonstration
+		// if (colliders.length === 0) {
+		// 	// Add a circle obstacle in the middle
+		// 	const centerX = xlimit / 2;
+		// 	const centerY = ylimit / 2;
+		// 	const circle = new StaticCircle(new vec2(centerX, centerY), 1.5); // Radius in simulation units
+		// 	colliders.push(circle);
+
+		// 	// Add a rectangular obstacle
+		// 	const rectX = xlimit * 0.7;
+		// 	const rectY = ylimit * 0.3;
+		// 	const rect = new StaticPlane(new vec2(rectX - 1.5, rectY - 0.75), new vec2(3.0, 1.5)); // Size in simulation units
+		// 	colliders.push(rect);
+		// }
 	},
 
 	resize(left: number, right: number, bottom: number, top: number): void {
@@ -371,15 +449,32 @@ const Engine = {
 	},
 
 	doPhysics(): void {		
-		if (!grid || particles.length === 0) return
+		if (!grid) return
 		const dt = 15; // milliseconds
+		const currentTime = Date.now();
+
+		// Reset grid before physics calculations
+		grid.reset();
+
+		// Spawn particles from sources
+		SpawnParticlesFromSources(currentTime);
+
+		// Skip physics if no particles
+		if (particles.length === 0) return;
+
+		// Add all particles to grid first (including newly spawned ones)
+		particles.forEach(p => {
+			grid.addParticleToCell(p);
+		});
 
 		CalcDensity();
 		CalcForces();
 		CalcForcedVelocity();
 		
+		// Reset grid again before updating positions
 		grid.reset();
-		// Finally, update positions
+		
+		// Finally, update positions and add back to grid
 		particles.forEach(p => p.update(dt * 0.001));
 	},
 
@@ -387,7 +482,7 @@ const Engine = {
 		if (i >= particles.length) return;
 		const p = particles[i];
 		out.x = p.x * scale;
-		out.y = p.y * scale - ymin;
+		out.y = p.y * scale; // Fixed: removed incorrect ymin subtraction
 	},
 
 	getParticlePressure(i: number): number {
@@ -408,11 +503,6 @@ const Engine = {
 		forceVy = -Vy;
 	},
 
-	// setGravity(gravityX: number, gravityY: number): void {
-	// 	gx = gravityX;
-	// 	gy = gravityY;
-	// },
-
 	setFluidProperties(params: FluidParams): void {
 		M    = params.ParticleMass;
 		K    = params.GasConstant;
@@ -420,31 +510,81 @@ const Engine = {
 		MU   = params.Viscosity;
 	},
 
-	// Debug method to check simulation state
-	getSimulationState(): { particleCount: number; hasGrid: boolean; isInitialized: boolean } {
-		return {
-			particleCount: particles.length,
-			hasGrid: !!grid,
-			isInitialized: particles.length > 0 && !!grid
-		};
-	}
+	// Static object management
+	addStaticObject(obj: StaticObject): void {
+		colliders.push(obj);
+	},
+
+	removeStaticObject(obj: StaticObject): void {
+		const index = colliders.indexOf(obj);
+		if (index !== -1) {
+			colliders.splice(index, 1);
+		}
+	},
+
+	clearStaticObjects(): void {
+		colliders.length = 0;
+	},
+
+	getStaticObjects(): StaticObject[] {
+		return [...colliders];
+	},
+
+	// Particle source management
+	addParticleSource(pos: vec2, rate: number, spawnRadius: number = 0.1): void {
+		sources.push({
+			pos: new vec2(pos.x / scale, pos.y / scale), // Convert to simulation coordinates
+			rate: rate,
+			lastSpawnTime: Date.now(),
+			spawnRadius: spawnRadius
+		});
+	},
+
+	removeParticleSource(index: number): void {
+		if (index >= 0 && index < sources.length) {
+			sources.splice(index, 1);
+		}
+	},
+
+	clearParticleSources(): void {
+		sources.length = 0;
+	},
+
+	getParticleSources(): ParticleSource[] {
+		return sources.map(source => ({
+			...source,
+			pos: new vec2(source.pos.x * scale, source.pos.y * scale) // Convert back to display coordinates
+		}));
+	},
+
+	getParticleCount(): number {
+		return particles.length;
+	},
+
+	// Initialize with a test particle source
+	initTestSource(): void {
+		// Clear existing sources first
+		sources = [];
+		
+		// Add a test source in the middle-left of the simulation area
+		const testX = xmin + (xmax - xmin) * 0.2; // 20% from left
+		const testY = ymin + (ymax - ymin) * 0.5; // Middle height
+		
+		sources.push({
+			pos: new vec2(testX, testY),
+			rate: 10, // 10 particles per second
+			lastSpawnTime: Date.now(),
+			spawnRadius: 0.2 // Small spawn radius in simulation units
+		});
+	},
 };
 
-// // HMR handling - preserve particle count but allow new code to take effect
-// if ((import.meta as any).hot) {
-// 	(import.meta as any).hot.accept(() => {
-// 		console.log('SPH module hot reloaded');
-// 		// If we had particles before HMR, we need to recreate them
-// 		// The React component won't know to call setNumParticles again
-// 		const particleCount = particles.length;
-// 		if (particleCount > 0) {
-// 			console.log(`Recreating ${particleCount} particles after HMR`);
-// 			particles = [];
-// 			for (let i = 0; i < particleCount; i++) {
-// 				particles.push(new Particle());
-// 			}
-// 		}
-// 	});
-// }
+// HMR handling - Reload page when this module is updated
+if ((import.meta as any).hot) {
+	(import.meta as any).hot.accept(() => {
+		window.location.reload();
+	});
+}
 
 export default Engine;
+export { StaticCircle, StaticPlane };

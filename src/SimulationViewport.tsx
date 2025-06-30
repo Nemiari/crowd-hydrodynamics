@@ -1,9 +1,13 @@
 import React, { useEffect, useRef, useCallback } from 'react';
 import * as THREE from 'three';
-import Engine, { FluidParams } from './physics/sph';
+import Engine, { FluidParams, StaticCircle, StaticPlane } from './physics/sph';
+import { vec2 } from './physics/util';
 
 export interface ViewportConfig {
 	Interactable: boolean;
+	Paused: boolean;
+	AddingObjects: boolean;
+	ObjectType: 'circle' | 'rectangle';
 }
 
 
@@ -20,6 +24,7 @@ export default function SimulationViewport({ fluidParams, ...cfg }: SimulationVi
 	const circleRef = useRef<THREE.BufferGeometry>(new THREE.CircleBufferGeometry(5, 12));
 	const arrowRef = useRef<THREE.BufferGeometry>(new THREE.CircleBufferGeometry(5, 3));
 	const meshesRef = useRef<THREE.Mesh[]>([]);
+	const staticObjectMeshesRef = useRef<THREE.Mesh[]>([]);
 	const animationIdRef = useRef<number | null>(null);
 	const isMountedRef = useRef<boolean>(true);
 	
@@ -32,7 +37,6 @@ export default function SimulationViewport({ fluidParams, ...cfg }: SimulationVi
 		zoomY: 1,
 		initialOrientation: 0,
 		windowMovementInterval: -1,
-		paused: false
 	});
 
 	const defaultOrientation = useCallback((): { angle: number } => {
@@ -53,8 +57,61 @@ export default function SimulationViewport({ fluidParams, ...cfg }: SimulationVi
 		dims.zoomY = 1;
 	}, []);
 
+
+	const updateStaticObjectMeshes = useCallback((): void => {
+		const scene = sceneRef.current;
+		const staticMeshes = staticObjectMeshesRef.current;
+		
+		if (!scene) return;
+
+		// Remove existing static object meshes
+		for (const mesh of staticMeshes) {
+			scene.remove(mesh);
+		}
+		staticMeshes.length = 0;
+
+		// Add meshes for current static objects
+		const staticObjects = Engine.getStaticObjects();
+		for (const obj of staticObjects) {
+			let geometry: THREE.BufferGeometry;
+			const scale = 30; // Same scale used in the simulation
+			
+			if (obj instanceof StaticCircle) {
+				geometry = new THREE.CircleBufferGeometry(obj.radius * scale, 32);
+			} else if (obj instanceof StaticPlane) {
+				geometry = new THREE.PlaneBufferGeometry(obj.width * scale, obj.height * scale);
+			} else {
+				continue; // Skip unknown object types
+			}
+
+			const material = new THREE.MeshBasicMaterial({ 
+				color: 0x888888, 
+				transparent: true, 
+				opacity: 0.8,
+				side: THREE.DoubleSide
+			});
+			
+			const mesh = new THREE.Mesh(geometry, material);
+			
+			// Position the mesh based on object position (scale to screen coordinates)
+			if (obj instanceof StaticCircle) {
+				mesh.position.set(obj.x * scale, obj.y * scale, 0);
+			} else if (obj instanceof StaticPlane) {
+				// For planes, position is top-left corner, but Three.js centers meshes
+				mesh.position.set(
+					(obj.x + obj.width / 2) * scale, 
+					(obj.y + obj.height / 2) * scale, 
+					0
+				);
+			}
+			
+			staticMeshes.push(mesh);
+			scene.add(mesh);
+		}
+	}, []);
+
 	const handleMouseMove = useCallback((e: MouseEvent): void => {
-		if (!cfg.Interactable) return;
+		if (!cfg.Interactable || cfg.AddingObjects) return;
 
 		const dims = dimensionsRef.current;
 		if (dims.windowMovementInterval !== -1) {
@@ -62,7 +119,32 @@ export default function SimulationViewport({ fluidParams, ...cfg }: SimulationVi
 			dims.windowMovementInterval = -1;
 		}
 		Engine.forceVelocity(e.clientX + dims.left, e.clientY, e.movementX, e.movementY);
-	}, [cfg.Interactable]);
+	}, [cfg.Interactable, cfg.AddingObjects]);
+
+	const handleMouseClick = useCallback((e: MouseEvent): void => {
+		if (!cfg.AddingObjects) return;
+
+		const dims = dimensionsRef.current;
+		const rect = canvasRef.current?.getBoundingClientRect();
+		if (!rect) return;
+
+		// Convert screen coordinates to simulation coordinates
+		const x = (e.clientX - rect.left) / 30; // Divide by scale (30)
+		const y = (dims.top - (e.clientY - rect.top)) / 30; // Flip Y and scale
+
+		if (cfg.ObjectType === 'circle') {
+			const radius = 1.5; // Reasonable radius in simulation units
+			const circle = new StaticCircle(new vec2(x, y), radius);
+			Engine.addStaticObject(circle);
+		} else if (cfg.ObjectType === 'rectangle') {
+			const width = 3.0;
+			const height = 1.5;
+			const rect = new StaticPlane(new vec2(x - width/2, y - height/2), new vec2(width, height));
+			Engine.addStaticObject(rect);
+		}
+		
+		updateStaticObjectMeshes();
+	}, [cfg.AddingObjects, cfg.ObjectType, updateStaticObjectMeshes]);
 
 	const handleTouchMove = useCallback((e: TouchEvent): void => {
 		if (!cfg.Interactable) return;
@@ -126,11 +208,8 @@ export default function SimulationViewport({ fluidParams, ...cfg }: SimulationVi
 	}, [cfg.Interactable]);
 
 	const handleVisibilityChange = useCallback((): void => {
-		const dims = dimensionsRef.current;
-		if (dims.paused && !document.hidden) {
-			(Engine as any).unpause?.();
-		}
-		dims.paused = document.hidden;
+		// Don't override user's manual pause state when document becomes visible/hidden
+		// The pause functionality should only be controlled by the UI button
 	}, []);
 
 	const handleMouseOut = useCallback((e: MouseEvent): void => {
@@ -219,33 +298,80 @@ export default function SimulationViewport({ fluidParams, ...cfg }: SimulationVi
 		
 		if (!scene || !camera || !renderer || !canvasRef.current) return;
 		
-		Engine.doPhysics();
-		for (let i = 0; i < meshes.length; i++) {
-			Engine.getParticlePosition(i, meshes[i].position);
-			const pressure = Engine.getParticlePressure(i);
-			(meshes[i].material as THREE.MeshBasicMaterial)
-				.color.setRGB(pressure / 20, 0.5, 0.5);
-				
-			// Change mesh based on movement
-			const velocity = Engine.getParticleVelocity(i);
-			if (velocity.lengthSq() < 0.5) { // Set to circle if not moving
-				meshes[i].scale.setScalar(0.8);
-				meshes[i].rotation.z = 0;
-				meshes[i].geometry = circleRef.current;
-			} else { // Set to arrow if moving
-				meshes[i].rotation.z = Math.atan2(velocity.y, velocity.x);
-				meshes[i].scale.set(1 + Math.abs(velocity.x) * 0.6, 1, 1);
-				meshes[i].geometry = arrowRef.current;
+		// Update static objects if they changed
+		updateStaticObjectMeshes();
+		
+		if (!cfg.Paused) {
+			Engine.doPhysics();
+
+			// Get current particle count (may be different from initial count due to sources)
+			const currentParticleCount = Engine.getParticleCount();
+			
+			// Dynamically adjust mesh count if needed
+			if (currentParticleCount > meshes.length) {
+				// Need to create more meshes for spawned particles
+				for (let i = meshes.length; i < currentParticleCount; i++) {
+					if (circleRef.current && materialRef.current && scene) {
+						const mesh = new THREE.Mesh(circleRef.current, (materialRef.current as THREE.MeshBasicMaterial).clone());
+						meshes[i] = mesh;
+						scene.add(mesh);
+					}
+				}
+			} else if (currentParticleCount < meshes.length) {
+				// Remove excess meshes if particle count decreased
+				for (let i = currentParticleCount; i < meshes.length; i++) {
+					if (scene && meshes[i]) {
+						scene.remove(meshes[i]);
+					}
+				}
+				meshes.length = currentParticleCount;
 			}
 
+			// Update all existing particles
+			for (let i = 0; i < currentParticleCount; i++) {
+				if (meshes[i]) {
+					Engine.getParticlePosition(i, meshes[i].position);
+					const pressure = Engine.getParticlePressure(i);
+					(meshes[i].material as THREE.MeshBasicMaterial)
+						.color.setRGB(pressure / 20, 0.5, 0.5);
 
+					// Change mesh based on movement
+					const velocity = Engine.getParticleVelocity(i);
+					if (velocity.lengthSq() < 0.5) { // Set to circle if not moving
+						meshes[i].scale.setScalar(0.8);
+						meshes[i].rotation.z = 0;
+						meshes[i].geometry = circleRef.current;
+					} else { // Set to arrow if moving
+						meshes[i].rotation.z = Math.atan2(velocity.y, velocity.x);
+						meshes[i].scale.set(1 + Math.abs(velocity.x) * 0.6, 1, 1);
+						meshes[i].geometry = arrowRef.current;
+					}
+				}
+			}
 		}
+		
+		// Always render the scene, even when paused
 		renderer.render(scene, camera);
 		
 		if (isMountedRef.current) {
 			animationIdRef.current = requestAnimationFrame(doLoop);
 		}
-	}, []);
+	}, [cfg.Paused, updateStaticObjectMeshes]);
+
+	// Add debugging effect to track pause state changes
+	useEffect(() => {
+		console.log('SimulationViewport: Pause state changed to:', cfg.Paused);
+		
+		// Restart the animation loop when pause state changes to ensure we use the updated callback
+		if (animationIdRef.current) {
+			cancelAnimationFrame(animationIdRef.current);
+			animationIdRef.current = null;
+		}
+		
+		if (isMountedRef.current) {
+			animationIdRef.current = requestAnimationFrame(doLoop);
+		}
+	}, [cfg.Paused, doLoop]);
 
 	const createScene = useCallback((): void => {
 		const dims = dimensionsRef.current;
@@ -298,8 +424,9 @@ export default function SimulationViewport({ fluidParams, ...cfg }: SimulationVi
 		attachToDocument();
 		setNumParticles(fluidParams.NumParticles);
 		Engine.setFluidProperties(fluidParams);
+		updateStaticObjectMeshes();
 		doLoop();
-	}, [createScene, attachToDocument, setNumParticles, doLoop, fluidParams]);
+	}, [createScene, attachToDocument, setNumParticles, doLoop, fluidParams, updateStaticObjectMeshes]);
 
 	const reinit = useCallback((): void => {
 		const dims = dimensionsRef.current;
@@ -312,8 +439,9 @@ export default function SimulationViewport({ fluidParams, ...cfg }: SimulationVi
 		Engine.init(width, height, dims.left, dims.right, dims.bottom, dims.top);
 		Engine.setFluidProperties(fluidParams);
 		setNumParticles(fluidParams.NumParticles);
+		updateStaticObjectMeshes();
 		doLoop();
-	}, [computeWindowArea, defaultOrientation, setNumParticles, doLoop, fluidParams]);
+	}, [computeWindowArea, defaultOrientation, setNumParticles, doLoop, fluidParams, updateStaticObjectMeshes]);
 
 	useEffect(() => {
 		isMountedRef.current = true;
@@ -363,6 +491,7 @@ export default function SimulationViewport({ fluidParams, ...cfg }: SimulationVi
 
 		// Remove existing listeners
 		renderer.domElement.removeEventListener('mousemove', handleMouseMove);
+		renderer.domElement.removeEventListener('click', handleMouseClick);
 		renderer.domElement.removeEventListener('touchstart', handleTouchStart);
 		renderer.domElement.removeEventListener('touchmove', handleTouchMove);
 		renderer.domElement.removeEventListener('touchend', handleTouchEnd);
@@ -375,14 +504,18 @@ export default function SimulationViewport({ fluidParams, ...cfg }: SimulationVi
 			renderer.domElement.addEventListener('touchend', handleTouchEnd, { passive: false });
 		}
 
+		// Always add click listener for adding objects
+		renderer.domElement.addEventListener('click', handleMouseClick, false);
+
 		// Cleanup function
 		return () => {
 			renderer.domElement.removeEventListener('mousemove', handleMouseMove);
+			renderer.domElement.removeEventListener('click', handleMouseClick);
 			renderer.domElement.removeEventListener('touchstart', handleTouchStart);
 			renderer.domElement.removeEventListener('touchmove', handleTouchMove);
 			renderer.domElement.removeEventListener('touchend', handleTouchEnd);
 		};
-	}, [cfg.Interactable, handleMouseMove, handleTouchStart, handleTouchMove, handleTouchEnd]);
+	}, [cfg.Interactable, handleMouseMove, handleMouseClick, handleTouchStart, handleTouchMove, handleTouchEnd]);
 
 	// Effect to update fluid parameters when they change
 	useEffect(() => {
@@ -413,7 +546,8 @@ export default function SimulationViewport({ fluidParams, ...cfg }: SimulationVi
 			style={{ 
 				width: '100%', 
 				height: '100%',
-				overflow: 'hidden'
+				overflow: 'hidden',
+				cursor: cfg.AddingObjects ? 'crosshair' : 'default'
 			}}
 		/>
 	);

@@ -1,13 +1,15 @@
 import { Button, Space, Collapse } from 'antd';
-import { Pointer } from 'lucide-react';
+import { Pause, Play, Pointer } from 'lucide-react';
 
 import ControlParameters from './ControlParameters';
+import StaticObjectControls from './StaticObjectControls';
 
 import './ControlPanel.css';
 
 export default function ControlPanel({
-	fluidParams, setFluidParams, 
-	viewportConfig, setViewportConfig
+	viewportConfig: cfg,
+	fluidParams: fluid,
+	setFluidParams, setViewportConfig
 }) {
 	return (
 		<div className='ControlPanel' style={{
@@ -16,15 +18,24 @@ export default function ControlPanel({
 			display: 'flex', flexDirection: 'column', gap: '10px'
 		}}>
 			<Space size='small'>
-				<Button onClick={() => setViewportConfig({ ...viewportConfig, Interactable: !viewportConfig.Interactable })}
-					type={viewportConfig.Interactable ? 'primary' : 'default'} 
-					icon={<Pointer size={20}/>}
+				<Button icon={cfg.Paused ? <Play size={20} /> : <Pause size={20} />} type='primary'
+					onClick={() => { setViewportConfig({ ...cfg, Paused: !cfg.Paused }) }}
+				/>
+
+				<Button icon={<Pointer size={20}/>} type={cfg.Interactable ? 'primary' : 'default'} 
+					onClick={() => setViewportConfig({ ...cfg, Interactable: !cfg.Interactable })}
 				/>
 
 			</Space>
-			<Collapse defaultActiveKey={['1']} expandIconPosition='right' >
+			<Collapse defaultActiveKey={['1']} >
 				<Collapse.Panel header="Fluid Parameters" key="1">
-					<ControlParameters simParams={fluidParams} setSimParams={setFluidParams} />
+					<ControlParameters simParams={fluid} setSimParams={setFluidParams} />
+				</Collapse.Panel>
+				<Collapse.Panel header="Static Objects" key="2">
+					<StaticObjectControls 
+						viewportConfig={cfg} 
+						setViewportConfig={setViewportConfig} 
+					/>
 				</Collapse.Panel>
 			</Collapse>
 		</div>

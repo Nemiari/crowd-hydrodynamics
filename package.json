@@ -11,15 +11,15 @@
 	"dependencies": {
 		"antd": "^5.26.2",
 		"lucide-react": "^0.525.0",
-		"react": "^19.0.0",
-		"react-dom": "^19.0.0",
+		"react": "^18.0.0",
+		"react-dom": "^18.0.0",
 		"react-resizable-panels": "^2.1.7",
 		"three": "^0.112.1"
 	},
 	"devDependencies": {
 		"@types/node": "^22.13.5",
-		"@types/react": "^19.0.8",
-		"@types/react-dom": "^19.0.3",
+		"@types/react": "^18.0.0",
+		"@types/react-dom": "^18.0.0",
 		"@types/three": "^0.177.0",
 		"@vitejs/plugin-react": "^4.3.4",
 		"autoprefixer": "^10.4.21",
