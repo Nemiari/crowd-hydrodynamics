@@ -1,13 +1,15 @@
 import React from 'react';
-import { Button, Space, Radio, Switch, Divider, message } from 'antd';
+import { Button, Space, Radio, Switch, Divider, message, ColorPicker } from 'antd';
+import type { ColorPickerProps } from 'antd';
 import { Circle, Square, Trash2, Edit, Plus, Copy, Undo } from 'lucide-react';
-import Engine from '../physics/sph';
+import Simulation from '../physics/sph';
 import { StaticCircle, StaticPlane } from '../physics/StaticObject';
 
 interface StaticObjectControlsProps {
 	viewportConfig: {
 		AddingObjects: boolean;
 		ObjectType: 'circle' | 'rectangle';
+		ObjectColor: string;
 	};
 	setViewportConfig: (config: any) => void;
 }
@@ -20,16 +22,23 @@ export default function StaticObjectControls({ viewportConfig, setViewportConfig
 		});
 	};
 
+	const handleColorChange: ColorPickerProps['onChange'] = (color) => {
+		setViewportConfig({
+			...viewportConfig,
+			ObjectColor: color.toHexString()
+		});
+	};
+
 	// const handleObjectTypeChange = (e: any) => {
 	// 	setViewportConfig({ ...viewportConfig, ObjectType: e.target.value });
 	// };
 
 	const handleClearObjects = () => {
-		Engine.clearStaticObjects();
+		Simulation.clearStaticObjects();
 	};
 
 	const handleUndoLastObject = () => {
-		const colliders = Engine.getStaticColliders();
+		const colliders = Simulation.getStaticColliders();
 		
 		if (colliders.length === 0) {
 			message.warning('No objects to undo');
@@ -38,7 +47,7 @@ export default function StaticObjectControls({ viewportConfig, setViewportConfig
 
 		// Get the last object and remove it
 		const lastObject = colliders[colliders.length - 1];
-		const success = Engine.removeStaticObject(lastObject);
+		const success = Simulation.removeStaticObject(lastObject);
 		
 		if (success) {
 			message.success('Last object removed');
@@ -48,7 +57,7 @@ export default function StaticObjectControls({ viewportConfig, setViewportConfig
 	};
 
 	const handleCopyColliders = async () => {
-		const colliders = Engine.getStaticColliders();
+		const colliders = Simulation.getStaticColliders();
 		
 		if (colliders.length === 0) {
 			message.warning('No colliders to copy');
@@ -56,13 +65,16 @@ export default function StaticObjectControls({ viewportConfig, setViewportConfig
 		}
 
 		// Generate code string
-		let codeString = '// Static colliders preset\nconst presetColliders = [\n';
+		let codeString = '// Static colliders preset\n';
+		codeString += 'import { vec2 } from "./physics/util";\n';
+		codeString += 'import { StaticCircle, StaticPlane } from "./physics/StaticObject";\n\n';
+		codeString += 'const presetColliders = [\n';
 		
 		colliders.forEach((collider, index) => {
 			if (collider instanceof StaticCircle) {
-				codeString += `  new StaticCircle(new vec2(${collider.x.toFixed(2)}, ${collider.y.toFixed(2)}), ${collider.radius.toFixed(2)})`;
+				codeString += `  new StaticCircle(new vec2(${collider.x.toFixed(2)}, ${collider.y.toFixed(2)}), ${collider.radius.toFixed(2)}, "${collider.color}")`;
 			} else if (collider instanceof StaticPlane) {
-				codeString += `  new StaticPlane(new vec2(${collider.x.toFixed(2)}, ${collider.y.toFixed(2)}), new vec2(${collider.width.toFixed(2)}, ${collider.height.toFixed(2)}))`;
+				codeString += `  new StaticPlane(new vec2(${collider.x.toFixed(2)}, ${collider.y.toFixed(2)}), new vec2(${collider.width.toFixed(2)}, ${collider.height.toFixed(2)}), "${collider.color}")`;
 			}
 			
 			if (index < colliders.length - 1) {
@@ -92,6 +104,22 @@ export default function StaticObjectControls({ viewportConfig, setViewportConfig
 					size="small"
 				/>
 			</div>
+
+			{viewportConfig.AddingObjects && (
+				<div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+					<span style={{ minWidth: '80px' }}>Color:</span>
+					<ColorPicker
+						value={viewportConfig.ObjectColor}
+						onChange={handleColorChange}
+						size="small"
+						showText={(color) => (
+							<span style={{ marginLeft: 8, fontSize: 12 }}>
+								{color.toHexString()}
+							</span>
+						)}
+					/>
+				</div>
+			)}
 
 			<Button 
 				onClick={handleUndoLastObject}

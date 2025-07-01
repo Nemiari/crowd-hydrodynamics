@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useCallback, useImperativeHandle, forwardRef } from 'react';
 import * as THREE from 'three';
-import Engine, { FluidParams, StaticCircle, StaticPlane } from './physics/sph';
+import Sim, { FluidParams, StaticCircle, StaticPlane } from './physics/sph';
 import { vec2 } from './physics/util';
 
 export interface ViewportConfig {
@@ -8,6 +8,7 @@ export interface ViewportConfig {
 	Paused: boolean;
 	AddingObjects: boolean;
 	ObjectType: 'circle' | 'rectangle';
+	ObjectColor: string;
 }
 
 
@@ -41,10 +42,6 @@ export default forwardRef<SimulationViewportRef, SimulationViewportProps>(functi
 	const backgroundMeshRef = useRef<THREE.Mesh | null>(null);
 	const textureLoaderRef = useRef<THREE.TextureLoader>(new THREE.TextureLoader());
 	
-	// Geometries for sources and sinks
-	const sourceGeometryRef = useRef<THREE.BufferGeometry>(new THREE.PlaneBufferGeometry(0.3, 3));
-	const sinkGeometryRef = useRef<THREE.BufferGeometry>(new THREE.PlaneBufferGeometry(0.5, 8));
-	
 	const dimensionsRef = useRef({
 		left: 0,
 		right: 0,
@@ -74,20 +71,6 @@ export default forwardRef<SimulationViewportRef, SimulationViewportProps>(functi
 		dims.zoomY = 1;
 	}, []);
 
-	const createBackground = useCallback((): void => {
-		const scene = sceneRef.current;
-		if (!scene) return;
-
-		// Remove existing background mesh if it exists
-		if (backgroundMeshRef.current) {
-			scene.remove(backgroundMeshRef.current);
-			backgroundMeshRef.current = null;
-		}
-
-		// Background image disabled - using white background from renderer clear color
-		console.log('Background image disabled - using solid white background');
-	}, []);
-
 	const updateSourcesAndSinksMeshes = useCallback((): void => {
 		const scene = sceneRef.current;
 		if (!scene) return;
@@ -103,59 +86,6 @@ export default forwardRef<SimulationViewportRef, SimulationViewportProps>(functi
 			scene.remove(mesh);
 		}
 		sinksMeshesRef.current.length = 0;
-
-		const scale = 30; // Same scale used in the simulation
-
-		// Add meshes for sources
-		const sources = Engine.getParticleSources();
-		for (const source of sources) {
-			const material = new THREE.MeshBasicMaterial({ 
-				color: 0x00ff00, // Green color for sources
-				transparent: true, 
-				opacity: 0.8,
-				side: THREE.DoubleSide
-			});
-			
-			const mesh = new THREE.Mesh(sourceGeometryRef.current, material);
-			
-			// Position the mesh at the source position
-			mesh.position.set(source.pos.x, source.pos.y, 0.1);
-			
-			// Rotate to point in spawn direction if applicable
-			if (source.spawnSide !== 'none' && source.direction) {
-				const angle = Math.atan2(source.direction.y, source.direction.x) - Math.PI / 2; // Cone points up by default
-				mesh.rotation.z = angle;
-			}
-			
-			// Scale the mesh
-			mesh.scale.setScalar(scale * 0.5);
-			
-			sourcesMeshesRef.current.push(mesh);
-			scene.add(mesh);
-		}
-
-		// Add meshes for sinks
-		const sinks = Engine.getParticleSinks();
-		for (const sink of sinks) {
-			const material = new THREE.MeshBasicMaterial({ 
-				color: 0xff0000, // Red color for sinks
-				transparent: true, 
-				opacity: 0.8,
-				side: THREE.DoubleSide
-			});
-			
-			const mesh = new THREE.Mesh(sinkGeometryRef.current, material);
-			
-			// Position the mesh at the sink position
-			mesh.position.set(sink.pos.x, sink.pos.y, 0.1);
-			
-			// Scale the mesh based on sink range
-			const sinkScale = sink.sinkRange * scale;
-			mesh.scale.setScalar(sinkScale);
-			
-			sinksMeshesRef.current.push(mesh);
-			scene.add(mesh);
-		}
 	}, []);
 
 
@@ -168,16 +98,13 @@ export default forwardRef<SimulationViewportRef, SimulationViewportProps>(functi
 		// Store current selection before clearing meshes
 		const currentSelection = selectedObjectRef.current;
 
-		// Remove existing static object meshes
-		for (const mesh of staticMeshes) {
-			scene.remove(mesh);
-		}
-		staticMeshes.length = 0;
+		// // Remove existing static object meshes
+		// for (const mesh of staticMeshes) { scene.remove(mesh) }
+		// staticMeshes.length = 0;
 
 		// Add meshes for current static objects
-		const staticObjects = Engine.getStaticColliders();
-		for (let i = 0; i < staticObjects.length; i++) {
-			const obj = staticObjects[i];
+		const staticObjects = Sim.getStaticColliders();
+		for (const obj of staticObjects) {
 			let geometry: THREE.BufferGeometry;
 			const scale = 30; // Same scale used in the simulation
 			
@@ -189,8 +116,8 @@ export default forwardRef<SimulationViewportRef, SimulationViewportProps>(functi
 				continue; // Skip unknown object types
 			}
 
-			const material = new THREE.MeshBasicMaterial({ 
-				color: 0x000000, 
+			const material = obj.material || new THREE.MeshBasicMaterial({ 
+				color: obj.color || "#000000", 
 				transparent: true, 
 				opacity: 1.0,
 				side: THREE.DoubleSide
@@ -281,7 +208,7 @@ export default forwardRef<SimulationViewportRef, SimulationViewportProps>(functi
 			clearInterval(dims.windowMovementInterval);
 			dims.windowMovementInterval = -1;
 		}
-		Engine.forceVelocity(e.clientX + dims.left, e.clientY, e.movementX, e.movementY);
+		Sim.forceVelocity(e.clientX + dims.left, e.clientY, e.movementX * 0.3, e.movementY * 0.3);
 	}, [cfg.Interactable, cfg.AddingObjects, cfg.ObjectType]);
 
 	const handleTouchMove = useCallback((e: TouchEvent): void => {
@@ -316,7 +243,7 @@ export default forwardRef<SimulationViewportRef, SimulationViewportProps>(functi
 				// Store current position for next calculation
 				(e.target as any)._prevTouch = { x: touchX, y: touchY };
 				
-				Engine.forceVelocity(touchX + dims.left, touchY, movementX, movementY);
+				Sim.forceVelocity(touchX + dims.left, touchY, movementX, movementY);
 			}
 		}
 	}, [cfg.Interactable]);
@@ -384,13 +311,10 @@ export default forwardRef<SimulationViewportRef, SimulationViewportProps>(functi
 		if (Math.abs(angleDiff) > 1) {
 			reinit();
 		} else {
-			Engine.resize(dims.left, dims.right, dims.bottom, dims.top);
+			Sim.resize(dims.left, dims.right, dims.bottom, dims.top);
 			renderer.setSize(width * dims.zoomX, height * dims.zoomY);
 			camera.rotation.z = 0;
 			camera.position.set(0, 0, camera.position.z);
-			
-			// Update background for new viewport size
-			createBackground();
 		}
 
 		renderer.setSize(width * dims.zoomX, height * dims.zoomY);
@@ -399,7 +323,7 @@ export default forwardRef<SimulationViewportRef, SimulationViewportProps>(functi
 		camera.top = dims.top;
 		camera.bottom = dims.bottom;
 		camera.updateProjectionMatrix();
-	}, [computeWindowArea, defaultOrientation, createBackground]);
+	}, [computeWindowArea, defaultOrientation]);
 
 	const setNumParticles = useCallback((n: number): void => {
 		const scene = sceneRef.current;
@@ -421,7 +345,7 @@ export default forwardRef<SimulationViewportRef, SimulationViewportProps>(functi
 			start = meshes.length;
 		}
 		
-		Engine.setNumParticles(n);
+		Sim.setNumParticles(n);
 		for (let i = start; i < n; i++) {
 			const mesh = new THREE.Mesh(circle, (material as THREE.MeshBasicMaterial).clone());
 			meshes[i] = mesh;
@@ -440,10 +364,10 @@ export default forwardRef<SimulationViewportRef, SimulationViewportProps>(functi
 		if (!scene || !camera || !renderer || !canvasRef.current) return;
 		
 		if (!cfg.Paused) {
-			Engine.doPhysics();
+			Sim.doPhysics();
 
 			// Get current particle count (may be different from initial count due to sources)
-			const currentParticleCount = Engine.getParticleCount();
+			const currentParticleCount = Sim.getParticleCount();
 			
 			// Dynamically adjust mesh count if needed
 			if (currentParticleCount > meshes.length) {
@@ -468,13 +392,13 @@ export default forwardRef<SimulationViewportRef, SimulationViewportProps>(functi
 			// Update all existing particles
 			for (let i = 0; i < currentParticleCount; i++) {
 				if (meshes[i]) {
-					Engine.getParticlePosition(i, meshes[i].position);
-					const pressure = Engine.getParticlePressure(i);
+					Sim.getParticlePosition(i, meshes[i].position);
+					const pressure = Sim.getParticlePressure(i);
 					(meshes[i].material as THREE.MeshBasicMaterial)
-						.color.setRGB(pressure / 20, 0.5, 0.5);
+						.color.setHSL((355 - pressure) / (255), 0.5, 0.5);
 
 					// Change mesh based on movement
-					const velocity = Engine.getParticleVelocity(i);
+					const velocity = Sim.getParticleVelocity(i);
 					if (velocity.lengthSq() < 0.5) { // Set to circle if not moving
 						meshes[i].scale.setScalar(0.8);
 						meshes[i].rotation.z = 0;
@@ -522,27 +446,21 @@ export default forwardRef<SimulationViewportRef, SimulationViewportProps>(functi
 		const width = dims.right - dims.left;
 		const height = dims.top - dims.bottom;
 		
-		Engine.init(width, height, dims.left, dims.right, dims.bottom, dims.top);
-
-		const near = 0;
-		const far = 1;
+		Sim.init(width, height, dims.left, dims.right, dims.bottom, dims.top);
 
 		const scene = new THREE.Scene();
-		// Set black background for the scene
 		scene.background = new THREE.Color(0xFFFFFF);
 		sceneRef.current = scene;
-
-		const camera = new THREE.OrthographicCamera(dims.left, dims.right, dims.top, dims.bottom, near, far);
+		
+		const camera = new THREE.OrthographicCamera(dims.left, dims.right, dims.top, dims.bottom);
 		camera.position.z = 0.5;
 		cameraRef.current = camera;
-
-		const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+		
+		const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 		renderer.setSize(width * dims.zoomX, height * dims.zoomY);
-		renderer.setClearColor(0xffffff, 1); // White clear color
 		
 		// Ensure the canvas element itself has a white background
 		renderer.domElement.style.backgroundColor = 'white';
-		
 		rendererRef.current = renderer;
 
 		const material = new THREE.MeshBasicMaterial({ color: 0x4499ff });
@@ -552,10 +470,7 @@ export default forwardRef<SimulationViewportRef, SimulationViewportProps>(functi
 		const arrow = new THREE.CircleBufferGeometry(5, 3);
 		circleRef.current = circle;
 		arrowRef.current = arrow;
-
-		// Create the background image
-		createBackground();
-	}, [computeWindowArea, defaultOrientation, createBackground]);
+	}, [computeWindowArea, defaultOrientation]);
 
 	const attachToDocument = useCallback((): void => {
 		const renderer = rendererRef.current;
@@ -573,7 +488,7 @@ export default forwardRef<SimulationViewportRef, SimulationViewportProps>(functi
 		createScene();
 		attachToDocument();
 		setNumParticles(fluidParams.NumParticles);
-		Engine.setFluidProperties(fluidParams);
+		Sim.setFluidProperties(fluidParams);
 		updateStaticObjectMeshes();
 		updateSourcesAndSinksMeshes();
 		doLoop();
@@ -587,21 +502,20 @@ export default forwardRef<SimulationViewportRef, SimulationViewportProps>(functi
 		const width = dims.right - dims.left;
 		const height = dims.top - dims.bottom;
 		
-		Engine.init(width, height, dims.left, dims.right, dims.bottom, dims.top);
-		Engine.setFluidProperties(fluidParams);
+		Sim.init(width, height, dims.left, dims.right, dims.bottom, dims.top);
+		Sim.setFluidProperties(fluidParams);
 		setNumParticles(fluidParams.NumParticles);
 		updateStaticObjectMeshes();
 		updateSourcesAndSinksMeshes();
-		createBackground();
 		doLoop();
-	}, [computeWindowArea, defaultOrientation, setNumParticles, doLoop, fluidParams, updateStaticObjectMeshes, updateSourcesAndSinksMeshes, createBackground]);
+	}, [computeWindowArea, defaultOrientation, setNumParticles, doLoop, fluidParams, updateStaticObjectMeshes, updateSourcesAndSinksMeshes]);
 
 	// Expose methods to parent component
 	useImperativeHandle(ref, () => ({
 		clearParticles: () => {
-			Engine.clearParticlesOnly();
+			Sim.clearParticlesOnly();
 			// Also reset particle count to current fluid params
-			Engine.setNumParticles(fluidParams.NumParticles);
+			Sim.setNumParticles(fluidParams.NumParticles);
 		}
 	}), [fluidParams.NumParticles]);
 
@@ -615,7 +529,7 @@ export default forwardRef<SimulationViewportRef, SimulationViewportProps>(functi
 		}
 		
 		// Clean up the physics engine state
-		Engine.cleanup();
+		Sim.cleanup();
 		
 		init();
 		
@@ -642,19 +556,19 @@ export default forwardRef<SimulationViewportRef, SimulationViewportProps>(functi
 			}
 			
 			// Clean up physics engine
-			Engine.cleanup();
+			Sim.cleanup();
 		};
 	}, []);
 
 	// Effect to update fluid parameters when they change
-	useEffect(() => {
-		Engine.setFluidProperties(fluidParams);
-	}, [fluidParams]);
+	useEffect(() => { Sim.setFluidProperties(fluidParams) },
+		[fluidParams]
+	);
 
-	// Separate effect to handle particle count changes
-	useEffect(() => {
-		setNumParticles(fluidParams.NumParticles);
-	}, [fluidParams.NumParticles, setNumParticles]);
+	// // Separate effect to handle particle count changes
+	// useEffect(() => { setNumParticles(fluidParams.NumParticles) },
+	// 	[fluidParams.NumParticles, setNumParticles]
+	// );
 
 	// Effect to handle window resize
 	useEffect(() => {
@@ -681,8 +595,8 @@ export default forwardRef<SimulationViewportRef, SimulationViewportProps>(functi
 			const y = (dims.top - (e.clientY - rect.top)) / 30; // Flip Y and scale
 
 			const radius = 1.5; // Reasonable radius in simulation units
-			const circle = new StaticCircle(new vec2(x, y), radius);
-			Engine.addStaticObject(circle);
+			const circle = new StaticCircle(new vec2(x, y), radius, cfg.ObjectColor);
+			Sim.addStaticObject(circle);
 			updateStaticObjectMeshes();
 		}
 	}, [cfg.AddingObjects, cfg.ObjectType, updateStaticObjectMeshes]);
@@ -731,8 +645,8 @@ export default forwardRef<SimulationViewportRef, SimulationViewportProps>(functi
 
 			// Only create if rectangle has meaningful size
 			if (width > 0.1 && height > 0.1) {
-				const rectObject = new StaticPlane(new vec2(x, y), new vec2(width, height));
-				Engine.addStaticObject(rectObject);
+				const rectObject = new StaticPlane(new vec2(x, y), new vec2(width, height), cfg.ObjectColor);
+				Sim.addStaticObject(rectObject);
 				updateStaticObjectMeshes();
 			}
 

@@ -16,7 +16,7 @@ export interface FluidParams {
 };
 
 // Smoothing Kernels
-const h  = 1;
+const h  = 1.5;
 const h2 = h * h;
 const h5 = Math.pow(h, 5);
 const h6 = Math.pow(h, 6);
@@ -45,7 +45,9 @@ let colliders: StaticObject[] = [];
 let sources: ParticleSource[] = [];
 let sinks: ParticleSink[] = [];
 
-const INIT_MAX_PARTICLES_IN_CELL = 50;
+const CELL_MAX_PARTICLES = 50;
+const EPS = 1e-4;
+
 
 let M    = 1.0; // Particle mass
 let K    = 150;  // Gas constant
@@ -97,6 +99,7 @@ class Particle extends DynamicObject {
 
 		this.velocity.addScaledVector(a, dt);
 		this.velocity.clampLength(0, 10); // Limit max speed
+		// this.velocity.addScaledVector(new vec2(0.33, -0.3), dt);
 		this.position.addScaledVector(this.velocity, dt);
 
 		// this.x  += (this.Vx + 0.5 * Ax * dt) * dt;
@@ -106,7 +109,7 @@ class Particle extends DynamicObject {
 		HandleObstacleCollisions(this);
 		HandleBoundaryCollisions(this);
 
-		grid.addParticleToCell(this);
+		grid.addParticle(this);
 		this.reset();
 	}
 
@@ -120,12 +123,12 @@ class Particle extends DynamicObject {
 // Grid cell
 class Cell {
 	particles: Particle[];
-	halfNeighbors: Cell[];
+	adjacentCells_TR: Cell[];
 	numParticles: number;
 
 	constructor() {
-		this.particles     = new Array<Particle>(INIT_MAX_PARTICLES_IN_CELL);
-		this.halfNeighbors = [];
+		this.particles     = new Array<Particle>(CELL_MAX_PARTICLES);
+		this.adjacentCells_TR = [];
 		this.numParticles  = 0;
 	}
 }
@@ -133,10 +136,8 @@ class Cell {
 // Spatial grid
 class Grid {
 	cells: Cell[] = [];
-	nx = 0;
-	ny = 0;
-	w  = 0;
-	h  = 0;
+	nx = 0; ny = 0;
+	w  = 0; h  = 0;
 
 	init(nx: number, ny: number, w: number, h: number): void {
 		this.nx = nx; this.ny = ny;
@@ -148,39 +149,31 @@ class Grid {
 			this.cells[i] = new Cell();
 		}
 
-		// precompute neighbor links
 		for (let j = 0; j < ny; j++) {
 			for (let i = 0; i < nx; i++) {
-				this.computeNeighbors(i, j, this.cells[i + j * nx]);
+				this.calculateAdjacentCells(i, j, this.cells[i + j * nx]);
 			}
 		}
 	}
 
-	private computeNeighbors(i: number, j: number, c: Cell): void {
-		const idx = i + j * this.nx;
-		// right
-		if (i < this.nx - 1) {
-			c.halfNeighbors.push(this.cells[idx + 1]);
-		}
-		// above row
-		if (j < this.ny - 1) {
-			for (let ii = Math.max(0, i - 1); ii <= Math.min(this.nx - 1, i + 1); ii++) {
-				c.halfNeighbors.push(this.cells[idx + this.nx + (ii - i)]);
-			}
-		}
+	private calculateAdjacentCells(i: number, j: number, c: Cell): void {
+		const dx = i + j * this.nx;
+
+		if (i < this.nx - 1)
+			c.adjacentCells_TR.push(this.cells[dx + 1]);
+
+		if (j < this.ny - 1)
+			for (let ii = Math.max(0, i - 1); ii <= Math.min(this.nx - 1, i + 1); ii++)
+				c.adjacentCells_TR.push(this.cells[dx + this.nx + (ii - i)]);
 	}
 
 	reset(): void {
-		for (const c of this.cells) {
-			c.numParticles = 0;
-		}
+		for (const c of this.cells) { c.numParticles = 0 };
 	}
 
 	hardReset(): void {
-		for (const c of this.cells) {
-			c.numParticles = 0;
-			c.particles = new Array<Particle>(INIT_MAX_PARTICLES_IN_CELL);
-		}
+		this.reset();
+		for (const c of this.cells) { c.particles = new Array<Particle>(CELL_MAX_PARTICLES) };
 	}
 
 	getCellFromLocation(x: number, y: number): Cell | undefined {
@@ -189,15 +182,12 @@ class Grid {
 		return this.cells[i + j * this.nx];
 	}
 
-	addParticleToCell(p: Particle): void {
-		const c = this.getCellFromLocation(p.x, p.y);
-		if (c) {
-			c.particles[c.numParticles++] = p;
-		}
+	addParticle(p1: Particle): void {
+		const c = this.getCellFromLocation(p1.x, p1.y);
+		if (c) c.particles[c.numParticles++] = p1;
 	}
 }
 
-// Density accumulation
 function AddDensity(p1: Particle, p2: Particle): void {
 	const r2 = dist2(p1, p2);
 	if (r2 < h2) {
@@ -208,36 +198,34 @@ function AddDensity(p1: Particle, p2: Particle): void {
 }
 
 function CalcDensity(): void {
-	for (const cell of grid.cells) {
-		for (let i = 0; i < cell.numParticles; i++) {
-			const p1 = cell.particles[i];
-			// intra-cell
-			for (let j = i + 1; j < cell.numParticles; j++) {
-				AddDensity(p1, cell.particles[j]);
-			}
-			// neighbors
-			for (const nb of cell.halfNeighbors) {
-				for (let j = 0; j < nb.numParticles; j++) {
+	for (const c of grid.cells) {
+		for (let i = 0; i < c.numParticles; i++) {
+			const p1 = c.particles[i];
+
+			for (let j = i + 1; j < c.numParticles; j++)
+				AddDensity(p1, c.particles[j]);
+
+			for (const nb of c.adjacentCells_TR)
+				for (let j = 0; j < nb.numParticles; j++)
 					AddDensity(p1, nb.particles[j]);
-				}
-			}
+
 			p1.P = Math.max(K * (p1.rho - RHO0), 0);
 		}
-	}
+	};
 }
 
-// Pairwise forces
+// Particle-particle interaction
 function AddForces(p1: Particle, p2: Particle): void {
 	const r2 = dist2(p1, p2);
 	if (r2 < h2) {
 		const r = Math.sqrt(r2) + 1e-6;
-		// pressure
+
+		// Pressure
 		const fPress = M * (p1.P + p2.P) / (2 * p2.rho) * Wspiky_grad2(r);
-		const dx = p2.x - p1.x;
-		const dy = p2.y - p1.y;
-		let Fx = fPress * dx;
-		let Fy = fPress * dy;
-		// viscosity
+		const [dx, dy] = [p2.x - p1.x, p2.y - p1.y];
+		let [Fx, Fy] = [dx * fPress, dy * fPress];
+
+		// Viscosity
 		const fVisc = MU * M * Wvisc_lapl(r) / p2.rho;
 		Fx += fVisc * (p2.Vx - p1.Vx);
 		Fy += fVisc * (p2.Vy - p1.Vy);
@@ -251,15 +239,13 @@ function HandleObstacleCollisions(p1: Particle): void {
 	for (const collider of colliders) {
 		const distance = collider.distanceTo(new vec2(p1.x, p1.y));
 		
-		// If particle is inside obstacle, push it out immediately
 		if (distance < 0) {
 			// Calculate surface normal using finite differences
-			const eps = 1e-4;
-			const dx = (collider.distanceTo(new vec2(p1.x + eps, p1.y)) - distance) / eps;
-			const dy = (collider.distanceTo(new vec2(p1.x, p1.y + eps)) - distance) / eps;
+			const dx = (collider.distanceTo(new vec2(p1.x + EPS, p1.y)) - distance) / EPS;
+			const dy = (collider.distanceTo(new vec2(p1.x, p1.y + EPS)) - distance) / EPS;
 			
 			// Normalize the gradient (surface normal pointing away from obstacle)
-			const gradMag = Math.sqrt(dx * dx + dy * dy) + eps;
+			const gradMag = Math.sqrt(dx * dx + dy * dy) + EPS;
 			const nx = dx / gradMag;
 			const ny = dy / gradMag;
 			
@@ -275,11 +261,12 @@ function HandleObstacleCollisions(p1: Particle): void {
 			const tangentVy = p1.Vy - normalVel * ny;
 			
 			// Remove normal velocity component and apply friction to tangent
-			const friction = 0.8; // Friction coefficient (0 = no friction, 1 = full friction)
+			const friction = 0; // Friction coefficient (0 = no friction, 1 = full friction)
 			if (normalVel < 0) { // Moving towards surface
 				p1.Vx = tangentVx * friction;
 				p1.Vy = tangentVy * friction;
 			}
+
 		}
 	}
 }
@@ -314,7 +301,7 @@ function CalcForces(): void {
 			for (let j = i + 1; j < cell.numParticles; j++) {
 				AddForces(p1, cell.particles[j]);
 			}
-			for (const nb of cell.halfNeighbors) {
+			for (const nb of cell.adjacentCells_TR) {
 				for (let j = 0; j < nb.numParticles; j++) {
 					AddForces(p1, nb.particles[j]);
 				}
@@ -386,7 +373,11 @@ function HandleParticleSources(currentTime: number): void {
 				particle.y = spawnY;
 				particle.Vx = velocityX;
 				particle.Vy = velocityY;
-				
+
+				// If there are too many particles, skip spawning;
+				if (particles.length >= 4000) {
+					continue; // Skip creating this particle
+				}
 				particles.push(particle);
 			}
 			
@@ -419,7 +410,7 @@ function HandleParticleSinks(currentTime: number): void {
 }
 
 
-const Engine = {
+const Simulation = {
 	init(width: number, height: number, left: number, right: number, bottom: number, top: number): void {
 		const xlimit = width  / scale;
 		xmin = left   / scale;
@@ -445,8 +436,7 @@ const Engine = {
 		  new StaticPlane(new vec2(0.00, 15.00), new vec2(0.20, 3.00)),
 		  new StaticPlane(new vec2(15.00, 1.00), new vec2(0.20, 3.00)),
 		  new StaticPlane(new vec2(3.67, 11.87), new vec2(21.23, 1.90)),
-		  new StaticPlane(new vec2(11.77, 13.00), new vec2(7.50, 1.17)),
-		  new StaticPlane(new vec2(10.93, 15.87), new vec2(5.77, 4.73)),
+			new StaticCircle(new vec2(14, 18), 2.5),
 		  new StaticPlane(new vec2(3.70, 22.43), new vec2(10.23, 2.67)),
 		  new StaticPlane(new vec2(2.20, 12.77), new vec2(2.50, 12.10)),
 		  new StaticPlane(new vec2(12.53, 23.20), new vec2(3.43, 6.13)),
@@ -455,72 +445,79 @@ const Engine = {
 		  new StaticPlane(new vec2(23.67, 26.03), new vec2(2.37, 4.03)),
 		  new StaticPlane(new vec2(22.30, 23.77), new vec2(3.67, 2.37)),
 		  new StaticPlane(new vec2(22.60, 19.47), new vec2(3.33, 4.30)),
-		  new StaticPlane(new vec2(19.53, 15.73), new vec2(3.43, 4.57)),
-		  new StaticPlane(new vec2(22.63, 15.67), new vec2(24.33, 4.23)),
-		  new StaticPlane(new vec2(26.43, 12.40), new vec2(16.07, 1.50)),
-		  new StaticPlane(new vec2(26.40, 11.43), new vec2(2.40, 1.47)),
-		  new StaticPlane(new vec2(22.60, 4.03), new vec2(2.17, 7.83)),
+			
+			new StaticCircle(new vec2(24.5, 20.7), 5),
+			new StaticPlane(new vec2(24, 15.8), new vec2(24, 4.23)),
+
+			new StaticPlane(new vec2(26.43, 12.40), new vec2(16.07, 1.50)),
 		  new StaticPlane(new vec2(24.27, 3.40), new vec2(13.07, 1.33)),
 		  new StaticPlane(new vec2(26.47, 4.47), new vec2(2.50, 1.80)),
 		  new StaticPlane(new vec2(31.80, 6.70), new vec2(5.17, 4.40)),
 		  new StaticPlane(new vec2(40.50, 3.53), new vec2(1.97, 9.33)),
-		  new StaticPlane(new vec2(0.00, 10.00), new vec2(0.20, 3.00)),
-		  new StaticPlane(new vec2(0.00, 15.00), new vec2(0.20, 3.00)),
-		  new StaticPlane(new vec2(15.00, 1.00), new vec2(0.20, 3.00)),
-		  new StaticPlane(new vec2(15.00, 10.00), new vec2(0.20, 3.00)),
 		  new StaticPlane(new vec2(46.30, 11.80), new vec2(1.70, 6.10)),
 		  new StaticPlane(new vec2(47.63, 12.57), new vec2(7.53, 1.83)),
 		  new StaticPlane(new vec2(42.20, 3.40), new vec2(12.33, 1.23)),
 		  new StaticPlane(new vec2(48.73, 6.67), new vec2(6.50, 4.33)),
-		  new StaticPlane(new vec2(0.00, 10.00), new vec2(0.20, 3.00)),
-		  new StaticPlane(new vec2(0.00, 15.00), new vec2(0.20, 3.00)),
-		  new StaticPlane(new vec2(15.00, 1.00), new vec2(0.20, 3.00)),
 		  new StaticPlane(new vec2(15.00, 10.00), new vec2(0.20, 3.00)),
-		  new StaticPlane(new vec2(25.53, 19.50), new vec2(32.47, 16.50)),
-		  new StaticPlane(new vec2(46.67, 12.70), new vec2(11.30, 7.40)),
-		  new StaticPlane(new vec2(36.87, 0.03), new vec2(3.93, 12.93)),
-		  new StaticPlane(new vec2(0.00, 10.00), new vec2(0.20, 3.00)),
-		  new StaticPlane(new vec2(0.00, 15.00), new vec2(0.20, 3.00)),
-		  new StaticPlane(new vec2(15.00, 1.00), new vec2(0.20, 3.00)),
 		  new StaticPlane(new vec2(15.00, 10.00), new vec2(0.20, 3.00)),
 		  new StaticPlane(new vec2(0.00, 0.03), new vec2(24.70, 13.67)),
-		  new StaticPlane(new vec2(24.13, 0.03), new vec2(33.40, 3.67)),
-		  new StaticPlane(new vec2(54.40, 0.03), new vec2(3.60, 35.97)),
+			
+			
+		  new StaticPlane(new vec2(0.00, 10.00), new vec2(0.20, 3.00)),
+		  new StaticPlane(new vec2(0.00, 15.00), new vec2(0.20, 3.00)),
+		  new StaticPlane(new vec2(15.00, 1.00), new vec2(0.20, 3.00)),
+		  new StaticPlane(new vec2(15.00, 10.00), new vec2(0.20, 3.00)),
+		  new StaticPlane(new vec2(0.00, 10.00), new vec2(0.20, 3.00)),
+		  new StaticPlane(new vec2(0.00, 15.00), new vec2(0.20, 3.00)),
+		  new StaticPlane(new vec2(15.00, 1.00), new vec2(0.20, 3.00)),
+
+			new StaticPlane(new vec2(25.53, 19.50), new vec2(32.47, 16.50)),
+		  new StaticPlane(new vec2(46.67, 12.70), new vec2(11.30, 7.40)),
+		  new StaticPlane(new vec2(36.87, 0.00), new vec2(3.93, 12.93)),
+		  new StaticPlane(new vec2(0.00, 10.00), new vec2(0.20, 3.00)),
+		  new StaticPlane(new vec2(0.00, 15.00), new vec2(0.20, 3.00)),
+		  new StaticPlane(new vec2(15.00, 1.00), new vec2(0.20, 3.00)),
+			new StaticPlane(new vec2(24.13, 0.00), new vec2(33.40, 3.67)),
+		  new StaticPlane(new vec2(54.40, 0.00), new vec2(3.60, 35.97)),
 		  new StaticPlane(new vec2(0.00, 30.87), new vec2(26.30, 5.13)),
-		  new StaticPlane(new vec2(0.10, 23.33), new vec2(15.67, 7.87)),
+		  new StaticPlane(new vec2(0.00, 23.33), new vec2(15.67, 7.87)),
 		  new StaticPlane(new vec2(0.00, 12.47), new vec2(2.63, 11.20)),
 		  new StaticPlane(new vec2(0.00, 22.87), new vec2(0.60, 8.93)),
 		  new StaticPlane(new vec2(0.00, 10.00), new vec2(0.20, 3.00)),
 		  new StaticPlane(new vec2(0.00, 15.00), new vec2(0.20, 3.00)),
 		  new StaticPlane(new vec2(15.00, 1.00), new vec2(0.20, 3.00)),
 		  new StaticPlane(new vec2(15.00, 10.00), new vec2(0.20, 3.00)),
-		  new StaticPlane(new vec2(0.00, 0.03), new vec2(59.00, 1.47)),
+		  new StaticPlane(new vec2(0.00, 0.00), new vec2(59.00, 1.47)),
 		  new StaticPlane(new vec2(56.97, 0.03), new vec2(6.87, 35.97))
 		];
 
 		// To use this preset, call:
-		presetColliders.forEach(collider => Engine.addStaticObject(collider));
+		// presetColliders.forEach(collider => Simulation.addStaticObject(collider));
 
 
 
 		// Particle sources
 		const defSources: Array<{ obj: StaticPlane, side: SpawnSide, rate: number, vel: number }> = [
-			{ obj: new StaticPlane(new vec2(4, 14), new vec2(1, 8)), side: 'right', rate: 8, vel: 2.0 },
+			{ obj: new StaticPlane(new vec2(3, 14), new vec2(1.8, 8)), side: 'right', rate: 80, vel: 2.0 },
+			{ obj: new StaticPlane(new vec2(18, 29.8), new vec2(5, 1)), side: 'bottom', rate: 80, vel: 2.0 },
 		];
 
-		defSources.forEach((def) => { this.addStaticObject(def.obj);
+		defSources.forEach((def) => {
+			// this.addStaticObject(def.obj);
 			this.addParticleSourceFromPlane(def.obj, def.side, def.rate, def.vel);
 		});
 
 		// Particle sinks
 		const defSinks: Array<{ obj: StaticPlane, side: SinkSide, rate: number, range: number }> = [
-			{ obj: new StaticPlane(new vec2(15, 1), new vec2(0.2, 3)), side: 'left', rate: 5, range: 0.3 },
-			{ obj: new StaticPlane(new vec2(15, 10), new vec2(0.2, 3)), side: 'right', rate: 5, range: 0.3 },
+			{ obj: new StaticPlane(new vec2(23, 26), new vec2(1, 5)), side: 'left', rate: 80, range: 0.3 },
+			{ obj: new StaticPlane(new vec2(24, 4), new vec2(3, 1)), side: 'left', rate: 8, range: 0.3 },
+			{ obj: new StaticPlane(new vec2(36, 4), new vec2(1, 9)), side: 'left', rate: 80, range: 0.3 },
+			{ obj: new StaticPlane(new vec2(54, 4), new vec2(1, 9)), side: 'left', rate: 80, range: 0.3 },
 		];
 
 		defSinks.forEach((def) => {
-			this.addStaticObject(def.obj);
-			this.addParticleSinkFromPlane(def.obj, def.side, def.rate, def.range);
+			// this.addStaticObject(def.obj);
+			// this.addParticleSinkFromPlane(def.obj, def.side, def.rate, def.range);
 		});
 	},
 
@@ -564,7 +561,7 @@ const Engine = {
 		if (particles.length === 0) return;
 
 		// Add all particles to grid first (including newly spawned ones)
-		particles.forEach(p => { grid.addParticleToCell(p) });
+		particles.forEach(p => { grid.addParticle(p) });
 
 		CalcDensity();
 		CalcForces();
@@ -733,7 +730,7 @@ if ((import.meta as any).hot) {
 	(import.meta as any).hot.accept(() => { window.location.reload() });
 }
 
-export default Engine;
+export default Simulation;
 export { StaticCircle, StaticPlane };
 export type { SpawnSide } from './ParticleSource';
 export type { SinkSide } from './ParticleSink';

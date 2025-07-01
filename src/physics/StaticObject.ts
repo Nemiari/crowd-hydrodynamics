@@ -1,8 +1,10 @@
-import { CircleBufferGeometry, PlaneBufferGeometry } from "three";
+import { Box2, CircleBufferGeometry, PlaneBufferGeometry } from "three";
 import { vec2 } from "./util";
 
 export default abstract class StaticObject {
 	position: vec2; // Top-left corner
+	color: string; // Color for rendering
+	material?: THREE.Material;
 
 	get x(): number { return this.position.x };
 	get y(): number { return this.position.y };
@@ -12,10 +14,9 @@ export default abstract class StaticObject {
 	/** Signed distance to the closest point inside the object */
 	abstract distanceTo(pos: vec2): number;
 
-	// abstract isInside(pos: vec2): boolean;
-
-	constructor(pos: vec2) {
+	constructor(pos: vec2, color: string="#000000") {
 		this.position = new vec2(pos.x, pos.y);
+		this.color = color;
 	}
 }
 
@@ -25,19 +26,20 @@ export class StaticPlane extends StaticObject {
 	get width(): number { return this.geometry.parameters.width; }
 	get height(): number { return this.geometry.parameters.height; }
 
-	constructor(pos: vec2, dimensions: vec2) {
-		super(pos);
+	constructor(pos: vec2, dimensions: vec2, color: string = "#000000", material?: THREE.Material) {
+		super(pos, color);
 		this.geometry = new PlaneBufferGeometry(dimensions.x, dimensions.y);
+		this.material = material;
 	}
 
 	distanceTo(pos: vec2): number {
 		// For rectangles, calculate distance to closest edge
 		// Negative if inside, positive if outside
-		const left = this.x;
-		const right = this.x + this.width;
-		const bottom = this.y;
 		const top = this.y + this.height;
-		
+		const left = this.x;
+		const bottom = this.y;
+		const right = this.x + this.width;
+
 		// Check if point is inside rectangle
 		if (pos.x >= left && pos.x <= right && pos.y >= bottom && pos.y <= top) {
 			// Point is inside - return negative distance to closest edge
@@ -61,8 +63,8 @@ export class StaticCircle extends StaticObject {
 
 	get radius(): number { return this.geometry.parameters.radius || 0; }
 
-	constructor(pos: vec2, radius: number) {
-		super(pos);
+	constructor(pos: vec2, radius: number, color: string = "#000000") {
+		super(pos, color);
 		this.geometry = new CircleBufferGeometry(radius, 32);
 	}
 
@@ -70,6 +72,6 @@ export class StaticCircle extends StaticObject {
 		const dx = pos.x - this.x;
 		const dy = pos.y - this.y;
 		const distance = Math.sqrt(dx * dx + dy * dy);
-		return distance - this.radius; // Negative if inside, positive if outside
+		return distance - this.radius;
 	}
 }

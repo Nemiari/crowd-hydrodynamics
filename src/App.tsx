@@ -5,7 +5,7 @@ import { message } from 'antd';
 
 import ControlPanel from './ui/ControlPanel';
 import { FluidParams } from './physics/sph';
-import Engine from './physics/sph';
+import Simulation from './physics/sph';
 
 const defaultFluidParams: FluidParams = {
 	NumParticles: 0,
@@ -20,6 +20,7 @@ const defaultViewportConfig = {
 	Paused: false,
 	AddingObjects: false,
 	ObjectType: 'rectangle' as const,
+	ObjectColor: '#ff0000',
 };
 
 const appCSS = {
@@ -59,7 +60,7 @@ export default function App() {
 	};
 
 	const handleUndoLastObject = () => {
-		const colliders = Engine.getStaticColliders();
+		const colliders = Simulation.getStaticColliders();
 		
 		if (colliders.length === 0) {
 			message.warning('No objects to undo');
@@ -68,7 +69,7 @@ export default function App() {
 
 		// Get the last object and remove it
 		const lastObject = colliders[colliders.length - 1];
-		const success = Engine.removeStaticObject(lastObject);
+		const success = Simulation.removeStaticObject(lastObject);
 		
 		if (success) {
 			message.success('Last object removed');
