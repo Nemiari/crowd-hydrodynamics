@@ -17,19 +17,19 @@ export default function ControlParameters({ simParams, setSimParams }) {
 	return (
 		<div>
 			<Parameter label="Gas Constant"
-				value={simParams.GasConstant} min={0} max={20} step={0.1}
+				value={simParams.GasConstant} min={0} max={50} step={0.1}
 				onChange={(v) => setSimParams({ ...simParams, GasConstant: v })}
 			/>
 			<Parameter label="Rest Density"
-				value={simParams.RestDensity} min={0.1} max={10} step={0.1}
+				value={simParams.RestDensity} min={0.1} max={5} step={0.1}
 				onChange={(v) => setSimParams({ ...simParams, RestDensity: v })}
 			/>
 			<Parameter label="Viscosity"
-				value={simParams.Viscosity} min={0.1} max={10} step={0.1}
+				value={simParams.Viscosity} min={1} max={10} step={0.1}
 				onChange={(v) => setSimParams({ ...simParams, Viscosity: v })}
 			/>
 			<Parameter label="Particle Mass"
-				value={simParams.ParticleMass} min={1} max={10} step={0.5}
+				value={simParams.ParticleMass} min={0.5} max={2} step={0.5}
 				onChange={(v) => setSimParams({ ...simParams, ParticleMass: v })}
 			/>
 		</div>

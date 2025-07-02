@@ -1,242 +1,126 @@
 // Simple Smoothed Particle Hydrodynamics (SPH) simulation engine
 // Based on https://github.com/mjwatkins2/WebGL-SPH
 
-import { Position, dist2, vec2 } from './util';
+import { dist2, randomPos } from './util';
+import { Positionable, vec2 } from "./types/util";
 import DynamicObject from './DynamicObject';
 import StaticObject, { StaticCircle, StaticPlane } from './StaticObject';
 import ParticleSource, { SpawnSide } from './ParticleSource';
 import ParticleSink, { SinkSide } from './ParticleSink';
+import Grid, { Cell } from './ParticleGrid';
+import { Box2 } from 'three';
+
 
 export interface FluidParams {
-	NumParticles: number;	// Number of particles in the sim		HandleParticleSources(currentTime);
 	ParticleMass: number;	// Mass of each particle
 	GasConstant: number;	// Gas constant for the equation of state
 	RestDensity: number;	// Rest density of the fluid
 	Viscosity: number;		// Viscosity of the fluid
 };
 
-// Smoothing Kernels
-const h  = 1.5;
-const h2 = h * h;
-const h5 = Math.pow(h, 5);
-const h6 = Math.pow(h, 6);
-const h9 = Math.pow(h, 9);
-const Wpoly6_coeff      = 315.0 / (64 * Math.PI * h9);
-const Wspiky_grad_coeff = -45.0 / (Math.PI * h6);
-const Wvisc_lapl_coeff  = 45.0  / (Math.PI * h5);
-
-function Wpoly6(r2: number): number {
-	const t = h2 - r2;
-	return Wpoly6_coeff * t * t * t;
-}
-function Wspiky_grad2(r: number): number {
-	const t = h - r;
-	return Wspiky_grad_coeff * t * t / r;
-}
-function Wvisc_lapl(r: number): number {
-	return Wvisc_lapl_coeff * (1 - r / h);
-}
-
-
-// Simulation state
-let grid!: Grid;
-let particles: Particle[] = [];
-let colliders: StaticObject[] = [];
-let sources: ParticleSource[] = [];
-let sinks: ParticleSink[] = [];
-
+const SIM_MAX_PARTICLES = 6000;
 const CELL_MAX_PARTICLES = 50;
 const EPS = 1e-4;
 
+// Smoothing Kernels
+const H  = 1;
+const H2 = H * H;
+const H5 = Math.pow(H, 5);
+const H6 = Math.pow(H, 6);
+const H9 = Math.pow(H, 9);
+
+const Wpoly6_coeff      = 315.0 / (64 * Math.PI * H9);
+function Wpoly6(r2: number): number {
+	const t = H2 - r2;
+	return Wpoly6_coeff * t * t * t;
+}
+const Wspiky_grad_coeff = 45.0 / (Math.PI * H6);
+function Wspiky_grad2(r: number): number {
+	const t = H - r;
+	return Wspiky_grad_coeff * t * t / r;
+}
+const Wvisc_lapl_coeff  = 45.0  / (Math.PI * H5);
+function Wvisc_lapl(r: number): number {
+	return Wvisc_lapl_coeff * (1 - r / H);
+}
+
+
+
+
+// Simulation state
+let particles: SPHParticle[] = [];
+let staticObjects: StaticObject[] = [];
+let externalForces: ((pos: vec2) => vec2)[] = [];
+
+let sources: ParticleSource[] = [];
+let sinks: ParticleSink[] = [];
+let grid!: Grid<SPHParticle>;
 
 let M    = 1.0; // Particle mass
-let K    = 150;  // Gas constant
-let RHO0 = 0.5;   // Rest density
-let MU   = 3;   // Viscosity
+let K    = 150; // Gas constant
+let RHO0 = 0.5; // Rest density
+let MU   = 3.0; // Viscosity
 
 // Domain boundaries
 let [xmin, ymin] = [0, 0];
 let [xmax, ymax] = [0, 0];
 
 let scale = 30;
-let gridCellSize = h;
+let gridCellSize = H;
 
 let forceVelocityOn = false;
 let [forceVx, forceVy] = [0, 0];
-let forceVelocityCell: Cell | undefined | null = null;
+let forceVelocityCell: Cell<SPHParticle> | undefined | null = null;
 
 
 
 // Particle definition
-class Particle extends DynamicObject {
+class SPHParticle extends DynamicObject {
+	M:   number; // Mass
 	P:   number; // Pressure
 	rho: number; // Local Density
 
-	constructor(pos?: vec2, velocity?: vec2) {
-		// Use safe defaults if bounds not set yet
-		const safeXmin = xmin || 0;
-		const safeXmax = xmax || 10;
-		const safeYmin = ymin || 0;
-		const safeYmax = ymax || 10;
+	constructor({
+		mass = M,
+		force = new vec2(),
+		velocity = new vec2(),
+		pos = new vec2(),
+	} = {}) {
+		super(pos, velocity, force);
 
-		super((pos) ? { x: pos.x, y: pos.y } : {
-			x: Math.random() * (safeXmax - safeXmin) + safeXmin,
-			y: Math.random() * (safeYmax - safeYmin) + safeYmin
-		});
-
+		this.P = 0;
+		this.M = mass;
 		this.velocity = (velocity) ? velocity : new vec2(
 			Math.random() - 0.5, Math.random() - 0.5
 		);
-
-		this.P  = 0;
-		this.rho = M * Wpoly6(0);
 
 		this.reset();
 	}
 
 	update(dt: number): void {
-		const a = new vec2(this.Fx / this.rho, this.Fy / this.rho);
+		// Calculate acceleration from forces
+		const acceleration = this.force.divideScalar(this.rho);
 
-		this.velocity.addScaledVector(a, dt);
-		this.velocity.clampLength(0, 10); // Limit max speed
-		// this.velocity.addScaledVector(new vec2(0.33, -0.3), dt);
-		this.position.addScaledVector(this.velocity, dt);
+		this.velocity // Update velocity
+			.addScaledVector(acceleration, dt)
+			.clampLength(0, 10) // Limit max speed
+		;
 
-		// this.x  += (this.Vx + 0.5 * Ax * dt) * dt;
-		// this.y  += (this.Vy + 0.5 * Ay * dt) * dt;
-		// this.position.addScaledVector(this.velocity.addScaledVector(a, dt/2), dt);
+		this.position // Update position
+			.addScaledVector(this.velocity, dt)
+		;
 
-		HandleObstacleCollisions(this);
-		HandleBoundaryCollisions(this);
-
-		grid.addParticle(this);
 		this.reset();
 	}
 
 	reset(): void {
-		this.Fx  = 0;
-		this.Fy  = 0;
-		this.rho = M * Wpoly6(0);
+		[this.Fx, this.Fy] = [0, 0];
+		this.rho = this.M * Wpoly6(0);
 	}
 }
 
-// Grid cell
-class Cell {
-	particles: Particle[];
-	adjacentCells_TR: Cell[];
-	numParticles: number;
-
-	constructor() {
-		this.particles     = new Array<Particle>(CELL_MAX_PARTICLES);
-		this.adjacentCells_TR = [];
-		this.numParticles  = 0;
-	}
-}
-
-// Spatial grid
-class Grid {
-	cells: Cell[] = [];
-	nx = 0; ny = 0;
-	w  = 0; h  = 0;
-
-	init(nx: number, ny: number, w: number, h: number): void {
-		this.nx = nx; this.ny = ny;
-		this.w  = w;  this.h  = h;
-
-		const n = nx * ny;
-		this.cells = new Array<Cell>(n);
-		for (let i = 0; i < n; i++) {
-			this.cells[i] = new Cell();
-		}
-
-		for (let j = 0; j < ny; j++) {
-			for (let i = 0; i < nx; i++) {
-				this.calculateAdjacentCells(i, j, this.cells[i + j * nx]);
-			}
-		}
-	}
-
-	private calculateAdjacentCells(i: number, j: number, c: Cell): void {
-		const dx = i + j * this.nx;
-
-		if (i < this.nx - 1)
-			c.adjacentCells_TR.push(this.cells[dx + 1]);
-
-		if (j < this.ny - 1)
-			for (let ii = Math.max(0, i - 1); ii <= Math.min(this.nx - 1, i + 1); ii++)
-				c.adjacentCells_TR.push(this.cells[dx + this.nx + (ii - i)]);
-	}
-
-	reset(): void {
-		for (const c of this.cells) { c.numParticles = 0 };
-	}
-
-	hardReset(): void {
-		this.reset();
-		for (const c of this.cells) { c.particles = new Array<Particle>(CELL_MAX_PARTICLES) };
-	}
-
-	getCellFromLocation(x: number, y: number): Cell | undefined {
-		const i = Math.floor(this.nx * x / this.w);
-		const j = Math.floor(this.ny * y / this.h);
-		return this.cells[i + j * this.nx];
-	}
-
-	addParticle(p1: Particle): void {
-		const c = this.getCellFromLocation(p1.x, p1.y);
-		if (c) c.particles[c.numParticles++] = p1;
-	}
-}
-
-function AddDensity(p1: Particle, p2: Particle): void {
-	const r2 = dist2(p1, p2);
-	if (r2 < h2) {
-		const val = M * Wpoly6(r2);
-		p1.rho += val;
-		p2.rho += val;
-	}
-}
-
-function CalcDensity(): void {
-	for (const c of grid.cells) {
-		for (let i = 0; i < c.numParticles; i++) {
-			const p1 = c.particles[i];
-
-			for (let j = i + 1; j < c.numParticles; j++)
-				AddDensity(p1, c.particles[j]);
-
-			for (const nb of c.adjacentCells_TR)
-				for (let j = 0; j < nb.numParticles; j++)
-					AddDensity(p1, nb.particles[j]);
-
-			p1.P = Math.max(K * (p1.rho - RHO0), 0);
-		}
-	};
-}
-
-// Particle-particle interaction
-function AddForces(p1: Particle, p2: Particle): void {
-	const r2 = dist2(p1, p2);
-	if (r2 < h2) {
-		const r = Math.sqrt(r2) + 1e-6;
-
-		// Pressure
-		const fPress = M * (p1.P + p2.P) / (2 * p2.rho) * Wspiky_grad2(r);
-		const [dx, dy] = [p2.x - p1.x, p2.y - p1.y];
-		let [Fx, Fy] = [dx * fPress, dy * fPress];
-
-		// Viscosity
-		const fVisc = MU * M * Wvisc_lapl(r) / p2.rho;
-		Fx += fVisc * (p2.Vx - p1.Vx);
-		Fy += fVisc * (p2.Vy - p1.Vy);
-
-		p1.Fx += Fx; p1.Fy += Fy;
-		p2.Fx -= Fx; p2.Fy -= Fy;
-	}
-}
-
-function HandleObstacleCollisions(p1: Particle): void {
-	for (const collider of colliders) {
+function HandleObstacleCollisions(p1: SPHParticle): void {
+	for (const collider of staticObjects) {
 		const distance = collider.distanceTo(new vec2(p1.x, p1.y));
 		
 		if (distance < 0) {
@@ -266,49 +150,106 @@ function HandleObstacleCollisions(p1: Particle): void {
 				p1.Vx = tangentVx * friction;
 				p1.Vy = tangentVy * friction;
 			}
-
 		}
 	}
 }
 
-function HandleBoundaryCollisions(p1: Particle): void {
-	const boundaryMargin = 0.1; // Small margin from boundaries
+function HandleBoundaryCollisions(p1: SPHParticle): void {
+
+
+	const repulsion = (d: number) => {
+		return Math.abs((M * p1.P / p1.rho) * Wspiky_grad2(d) * d);
+	};
+
+	const l = p1.x - xmin;
+	const b = p1.y - ymin;
+	const t = ymax - p1.y;
+	const r = xmax - p1.x;
+	if (l < H) {p1.Fx += repulsion(l)}
+	else if (l <= 0) {p1.Vx = -p1.Vx}
+	if (b < H) {p1.Fy += repulsion(b)}
+	else if (b <= 0) {p1.Vy = -p1.Vy}
+	if (t < H) {p1.Fy -= repulsion(t)}
+	else if (t <= 0) {p1.Vy = -p1.Vy}
+	if (r < H) {p1.Fx -= repulsion(r)}
+	else if (r <= 0) {p1.Vx = -p1.Vx}
 	
-	if (p1.x < xmin + boundaryMargin) {
-		p1.x = xmin + boundaryMargin;
-		if (p1.Vx < 0) p1.Vx = -p1.Vx * 0.3; // Small bounce away from wall
-	} else if (p1.x > xmax - boundaryMargin) {
-		p1.x = xmax - boundaryMargin;
-		if (p1.Vx > 0) p1.Vx = -p1.Vx * 0.3; // Small bounce away from wall
+
+	// if (p1.x - xmin < H) {p1.Fx += repulsion(p1.x - xmin); /* p1.Vx = -p1.Vx */} //l
+	// if (p1.y - ymin < H) {p1.Fy += repulsion(p1.y - ymin); /* p1.Vy = -p1.Vy */} //b
+	// if (ymax - p1.y < H) {p1.Fy -= repulsion(ymax - p1.y); /* p1.Vy = -p1.Vy */} //t
+	// if (xmax - p1.x < H) {p1.Fx -= repulsion(xmax - p1.x); /* p1.Vx = -p1.Vx */} //r
+
+
+
+	// if (p1.x < xmin + H) { const d = p1.x - xmin;
+	// 	p1.Fx += repulsion(d);
+	// } else if (p1.x > xmax - H) { const d = xmax - p1.x;
+	// 	p1.Fx -= repulsion(d);
+	// }
+
+	// if (p1.y < ymin + H) { const d = p1.y - ymin;
+	// 	p1.Fy += repulsion(d);
+	// } else if (p1.y > ymax - H) { const d = ymax - p1.y;
+	// 	p1.Fy -= repulsion(d);
+	// }
+}
+
+
+function repulseFromSurface(p1: SPHParticle): void {
+	const surfaceNormal = new vec2();
+
+	if (p1.x < xmin + H) {
+		surfaceNormal.set(-1, 0);
+	} else if (p1.x > xmax - H) {
+		surfaceNormal.set(1, 0);
 	}
-	
-	if (p1.y < ymin + boundaryMargin) {
-		p1.y = ymin + boundaryMargin;
-		if (p1.Vy < 0) p1.Vy = -p1.Vy * 0.3; // Small bounce away from wall
-	} else if (p1.y > ymax - boundaryMargin) {
-		p1.y = ymax - boundaryMargin;
-		if (p1.Vy > 0) p1.Vy = -p1.Vy * 0.3; // Small bounce away from wall
+
+	if (p1.y < ymin + H) {
+		surfaceNormal.set(0, -1);
+	} else if (p1.y > ymax - H) {
+		surfaceNormal.set(0, 1);
+	}
+
+	if (surfaceNormal.length() > 0) {
+		surfaceNormal.normalize();
+		const d = surfaceNormal.length();
+		const force = (M * p1.P / p1.rho) * Wspiky_grad2(d) * d;
+		p1.Fx -= force * surfaceNormal.x;
+		p1.Fy -= force * surfaceNormal.y;
 	}
 }
 
-// Accumulate all forces
-function CalcForces(): void {
-	for (const cell of grid.cells) {
-		for (let i = 0; i < cell.numParticles; i++) {
-			const p1 = cell.particles[i];
+// Particle-particle interaction forces
+function addForces(p1: SPHParticle, p2: SPHParticle): void {
+	const r2 = dist2(p1, p2);
+	if (r2 < H2) {
+		const r = Math.sqrt(r2) + 1e-6;
 
-			// Pairwise particle interactions
-			for (let j = i + 1; j < cell.numParticles; j++) {
-				AddForces(p1, cell.particles[j]);
-			}
-			for (const nb of cell.adjacentCells_TR) {
-				for (let j = 0; j < nb.numParticles; j++) {
-					AddForces(p1, nb.particles[j]);
-				}
-			}
-		}
+		// Pressure
+		const fPress = M * (p1.P + p2.P) / (2 * p2.rho) * Wspiky_grad2(r);
+		const [dx, dy] = [p1.x - p2.x, p1.y - p2.y];
+		let [Fx, Fy] = [dx * fPress, dy * fPress];
+
+		// Viscosity
+		const fVisc = MU * M * Wvisc_lapl(r) / p2.rho;
+		Fx += fVisc * (p2.Vx - p1.Vx);
+		Fy += fVisc * (p2.Vy - p1.Vy);
+
+		p1.Fx += Fx; p1.Fy += Fy;
+		p2.Fx -= Fx; p2.Fy -= Fy;
 	}
 }
+
+function addDensity(p1: SPHParticle, p2: SPHParticle): void {
+	const r2 = dist2(p1, p2);
+	if (r2 < H2) {
+		const val = M * Wpoly6(r2);
+		p1.rho += val; p2.rho += val;
+	}
+}
+
+
 
 function CalcForcedVelocity(): void {
 	if (!forceVelocityOn || forceVelocityCell == null) return;
@@ -327,7 +268,7 @@ function HandleParticleSources(currentTime: number): void {
 		const timeSinceLastSpawn = currentTime - source.lastSpawnTime;
 		const spawnInterval = 1000 / source.rate; // Convert rate to milliseconds between spawns
 		
-		if (timeSinceLastSpawn >= spawnInterval) {
+		if (timeSinceLastSpawn >= spawnInterval && particles.length < SIM_MAX_PARTICLES) {
 			let spawnX: number, spawnY: number;
 			let velocityX: number, velocityY: number;
 
@@ -368,16 +309,12 @@ function HandleParticleSources(currentTime: number): void {
 			
 			// Check if spawn position is within bounds
 			if (spawnX >= xmin && spawnX <= xmax && spawnY >= ymin && spawnY <= ymax) {
-				const particle = new Particle();
+				const particle = new SPHParticle();
 				particle.x = spawnX;
 				particle.y = spawnY;
 				particle.Vx = velocityX;
 				particle.Vy = velocityY;
 
-				// If there are too many particles, skip spawning;
-				if (particles.length >= 4000) {
-					continue; // Skip creating this particle
-				}
 				particles.push(particle);
 			}
 			
@@ -413,19 +350,15 @@ function HandleParticleSinks(currentTime: number): void {
 const Simulation = {
 	init(width: number, height: number, left: number, right: number, bottom: number, top: number): void {
 		const xlimit = width  / scale;
-		xmin = left   / scale;
-		xmax = right  / scale;
 		const ylimit = height / scale;
-		ymin = bottom / scale;
-		ymax = top    / scale;
+		this.resize(left, right, bottom, top);
 
 		const nx = Math.floor(xlimit / gridCellSize);
 		const ny = Math.floor(ylimit / gridCellSize);
-		
+
 		// Initialize grid if it doesn't exist or has wrong dimensions
 		if (!grid || grid.nx !== nx || grid.ny !== ny) {
-			grid = new Grid();
-			grid.init(nx, ny, xlimit, ylimit);
+			grid = new Grid<SPHParticle>(nx, ny, xlimit, ylimit, CELL_MAX_PARTICLES);
 		}
 
 		// Default simulation setup
@@ -462,7 +395,6 @@ const Simulation = {
 		  new StaticPlane(new vec2(15.00, 10.00), new vec2(0.20, 3.00)),
 		  new StaticPlane(new vec2(0.00, 0.03), new vec2(24.70, 13.67)),
 			
-			
 		  new StaticPlane(new vec2(0.00, 10.00), new vec2(0.20, 3.00)),
 		  new StaticPlane(new vec2(0.00, 15.00), new vec2(0.20, 3.00)),
 		  new StaticPlane(new vec2(15.00, 1.00), new vec2(0.20, 3.00)),
@@ -489,37 +421,38 @@ const Simulation = {
 		  new StaticPlane(new vec2(15.00, 10.00), new vec2(0.20, 3.00)),
 		  new StaticPlane(new vec2(0.00, 0.00), new vec2(59.00, 1.47)),
 		  new StaticPlane(new vec2(56.97, 0.03), new vec2(6.87, 35.97))
-		];
-
-		// To use this preset, call:
-		// presetColliders.forEach(collider => Simulation.addStaticObject(collider));
-
-
-
-		// Particle sources
-		const defSources: Array<{ obj: StaticPlane, side: SpawnSide, rate: number, vel: number }> = [
-			{ obj: new StaticPlane(new vec2(3, 14), new vec2(1.8, 8)), side: 'right', rate: 80, vel: 2.0 },
-			{ obj: new StaticPlane(new vec2(18, 29.8), new vec2(5, 1)), side: 'bottom', rate: 80, vel: 2.0 },
-		];
-
-		defSources.forEach((def) => {
-			// this.addStaticObject(def.obj);
-			this.addParticleSourceFromPlane(def.obj, def.side, def.rate, def.vel);
+		].forEach(obj => {
+			// this.addStaticObject(obj)
 		});
 
-		// Particle sinks
-		const defSinks: Array<{ obj: StaticPlane, side: SinkSide, rate: number, range: number }> = [
+		
+		[ // Particle sources
+			{ obj: new StaticPlane(new vec2(3, 14), new vec2(1.8, 8)), side: 'right', rate: 80, vel: 2.0 },
+			{ obj: new StaticPlane(new vec2(18, 29.8), new vec2(5, 1)), side: 'bottom', rate: 80, vel: 2.0 },
+		].forEach((def) => {
+			// this.addStaticObject(def.obj);
+			// this.addParticleSourceFromPlane(def.obj, def.side, def.rate, def.vel);
+		});
+
+		[ // Particle sinks
 			{ obj: new StaticPlane(new vec2(23, 26), new vec2(1, 5)), side: 'left', rate: 80, range: 0.3 },
 			{ obj: new StaticPlane(new vec2(24, 4), new vec2(3, 1)), side: 'left', rate: 8, range: 0.3 },
 			{ obj: new StaticPlane(new vec2(36, 4), new vec2(1, 9)), side: 'left', rate: 80, range: 0.3 },
 			{ obj: new StaticPlane(new vec2(54, 4), new vec2(1, 9)), side: 'left', rate: 80, range: 0.3 },
-		];
-
-		defSinks.forEach((def) => {
+		].forEach((def) => {
 			// this.addStaticObject(def.obj);
 			// this.addParticleSinkFromPlane(def.obj, def.side, def.rate, def.range);
 		});
+
+
+
+		// TESTING: half-fill simulation with particles
+		const area: Box2 = new Box2( new vec2(xmin, ymin), new vec2(xmax, ymax) );
+		for (let i = 0; i < SIM_MAX_PARTICLES/2; i++) {
+			particles.push(new SPHParticle({ pos: randomPos(area) }));
+		}
 	},
+
 
 	cleanup(): void {
 		particles = [];
@@ -536,15 +469,17 @@ const Simulation = {
 	},
 
 	resize(left: number, right: number, bottom: number, top: number): void {
-		xmin = Math.max(left   / scale, 0);
-		xmax = Math.min(right  / scale, xmax);
-		ymin = Math.max(bottom / scale, 0);
-		ymax = Math.min(top    / scale, ymax);
-	},
+		const margin = 5;
 
-	setNumParticles(n: number): void {
-		// Disabled initial particle spawning - particles will only be created by sources
-		particles = [];
+		xmin = (left + margin)   / scale;
+		ymin = (bottom + margin) / scale;
+		xmax = (right - margin)  / scale;
+		ymax = (top - margin)    / scale;
+
+		// xmin = Math.max(left/scale, 0) + margin;
+		// ymin = Math.max(bottom/scale, 0) + margin;
+		// xmax = Math.min(right/scale, xmax) - margin;
+		// ymax = Math.min(top/scale, ymax) - margin;
 	},
 
 	doPhysics(): void {		
@@ -556,25 +491,50 @@ const Simulation = {
 		grid.reset();
 
 		HandleParticleSources(currentTime);
-		HandleParticleSinks(currentTime)
+		HandleParticleSinks(currentTime);
+
+
 
 		if (particles.length === 0) return;
 
 		// Add all particles to grid first (including newly spawned ones)
 		particles.forEach(p => { grid.addParticle(p) });
 
-		CalcDensity();
-		CalcForces();
+		// CalcDensity();
+		// CalcForces();
+
+		grid.pairwise(addDensity);
+		particles.forEach(p => { p.P = Math.max(K * (p.rho - RHO0), 0); });
+		grid.pairwise(addForces);
+
 		CalcForcedVelocity();
 		
 		// Reset grid again before updating positions
 		grid.reset();
-		
-		// Finally, update positions and add back to grid
-		particles.forEach(p => p.update(dt * 0.001));
+
+		let avgRho = 0;
+		let avgSpeed = 0;
+		for (const p of particles) {
+			
+			HandleObstacleCollisions(p);
+			HandleBoundaryCollisions(p);
+			
+			p.update(dt * 0.001);
+			
+			grid.addParticle(p);
+
+			avgRho += p.rho;
+			avgSpeed += p.velocity.length();
+
+			p.reset();
+		}
+
+		avgRho /= particles.length;
+		avgSpeed /= particles.length;
+		console.log(`Avg Density: ${avgRho.toFixed(2)}, Avg Speed: ${avgSpeed.toFixed(2)}`);
 	},
 
-	getParticlePosition(i: number, out: Position): void {
+	getParticlePosition(i: number, out: Positionable): void {
 		if (i >= particles.length) return;
 		const p = particles[i];
 		out.x = p.x * scale;
@@ -608,13 +568,13 @@ const Simulation = {
 
 	// Static object management
 	addStaticObject(obj: StaticObject): void {
-		colliders.push(obj);
+		staticObjects.push(obj);
 	},
 
 	removeStaticObject(obj: StaticObject): boolean {
-		const index = colliders.indexOf(obj);
+		const index = staticObjects.indexOf(obj);
 		if (index > -1) {
-			colliders.splice(index, 1);
+			staticObjects.splice(index, 1);
 			// Also remove any sources and sinks that were associated with this object
 			if (obj instanceof StaticPlane) {
 				sources = sources.filter(source => source.staticPlane !== obj);
@@ -626,11 +586,11 @@ const Simulation = {
 	},
 
 	getStaticColliders(): StaticObject[] {
-		return [...colliders];
+		return [...staticObjects];
 	},
 
 	clearStaticObjects(): void {
-		colliders = [];
+		staticObjects = [];
 		// Also clear any sources and sinks that were associated with planes
 		sources = sources.filter(source => source.staticPlane === null);
 		sinks = sinks.filter(sink => sink.staticPlane === null);

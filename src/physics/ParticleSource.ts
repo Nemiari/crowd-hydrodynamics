@@ -1,4 +1,4 @@
-import { vec2 } from "./util";
+import { vec2 } from "./types/util";
 import { StaticPlane } from "./StaticObject";
 
 export type SpawnSide = 'none' | 'top' | 'bottom' | 'left' | 'right';

@@ -1,5 +1,5 @@
 import { Box2, CircleBufferGeometry, PlaneBufferGeometry } from "three";
-import { vec2 } from "./util";
+import { vec2 } from "./types/util";
 
 export default abstract class StaticObject {
 	position: vec2; // Top-left corner

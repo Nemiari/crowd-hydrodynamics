@@ -1,27 +1,18 @@
-import { Vector2 } from "three";
-
-// == Types ========================================
-
-export type Position = { x: number; y: number; };
-// export type Velocity = { Vx: number; Vy: number; };
-
-export type Side = 'top' | 'bottom' | 'left' | 'right';
-
+import { Box2 } from "three";
+import { Positionable, vec2 } from "./types/util";
 
 // == Functions ====================================
 
-/** Squared distance between two points */
-export function dist2(p1: Position, p2: Position): number {
+/** Squared distance between two point-like objects */
+export function dist2(p1: Positionable, p2: Positionable): number {
 	const dx = p2.x - p1.x;
 	const dy = p2.y - p1.y;
 	return dx * dx + dy * dy;
 }
 
-
-// == Classes ======================================
-
-export class vec2 extends Vector2 {
-	constructor(x?: number, y?: number) {
-		super(x, y);
-	}
+/** Return a random position within the given area */
+export function randomPos(area: Box2): vec2 {
+	const x = Math.random() * (area.max.x - area.min.x) + area.min.x;
+	const y = Math.random() * (area.max.y - area.min.y) + area.min.y;
+	return new vec2(x, y);
 }

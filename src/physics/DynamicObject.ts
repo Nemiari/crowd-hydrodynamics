@@ -1,4 +1,6 @@
-import { vec2 } from "./util";
+import { vec2 } from "./types/util";
+
+type Vector = { x: number; y: number; } | vec2;
 
 export default abstract class DynamicObject {
 	position: vec2;
@@ -20,12 +22,17 @@ export default abstract class DynamicObject {
 	set Fx(value: number) { this.force.x = value };
 	set Fy(value: number) { this.force.y = value };
 
-	constructor(pos: { x: number, y: number }) {
-		this.position = new vec2(pos.x, pos.y);
-		this.velocity = new vec2(0, 0);
-		this.force = new vec2(0, 0);
+	constructor(pos: Vector, velocity?: Vector, force?: Vector) {
+		this.position = pos instanceof vec2 ? pos : new vec2(
+			pos.x, pos.y
+		);
+		this.velocity = velocity instanceof vec2 ? velocity : new vec2(
+			velocity?.x || 0, velocity?.y || 0
+		);
+		this.force    = force instanceof vec2 ? force : new vec2(
+			force?.x || 0, force?.y || 0
+		);
 	}
 
-	abstract reset(): void;
 	abstract update(dt: number): void;
 }

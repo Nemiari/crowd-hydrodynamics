@@ -66,24 +66,24 @@ export default function StaticObjectControls({ viewportConfig, setViewportConfig
 
 		// Generate code string
 		let codeString = '// Static colliders preset\n';
-		codeString += 'import { vec2 } from "./physics/util";\n';
-		codeString += 'import { StaticCircle, StaticPlane } from "./physics/StaticObject";\n\n';
-		codeString += 'const presetColliders = [\n';
+		// codeString += 'import { vec2 } from "./physics/util";\n';
+		// codeString += 'import { StaticCircle, StaticPlane } from "./physics/StaticObject";\n\n';
+		// codeString += 'const presetColliders = [\n';
+		codeString += '[\n';
 		
 		colliders.forEach((collider, index) => {
 			if (collider instanceof StaticCircle) {
 				codeString += `  new StaticCircle(new vec2(${collider.x.toFixed(2)}, ${collider.y.toFixed(2)}), ${collider.radius.toFixed(2)}, "${collider.color}")`;
 			} else if (collider instanceof StaticPlane) {
-				codeString += `  new StaticPlane(new vec2(${collider.x.toFixed(2)}, ${collider.y.toFixed(2)}), new vec2(${collider.width.toFixed(2)}, ${collider.height.toFixed(2)}), "${collider.color}")`;
+				codeString += `  new StaticPlane(new vec2(${collider.x.toFixed(2)}, ${collider.y.toFixed(2)}), new vec2(${collider.width.toFixed(2)}, ${collider.height.toFixed(2)}), "${collider.color}"),`;
 			}
 			
-			if (index < colliders.length - 1) {
-				codeString += ',';
-			}
+			// if (index < colliders.length - 1) { codeString += ',' }
 			codeString += '\n';
 		});
 		
-		codeString += '];\n\n// To use this preset, call:\n// presetColliders.forEach(collider => Engine.addStaticObject(collider));';
+		// codeString += '];\npresetColliders.forEach(collider => Simulation.addStaticObject(collider));';
+		codeString += '].forEach(collider => Simulation.addStaticObject(collider));';
 
 		try {
 			await navigator.clipboard.writeText(codeString);
@@ -105,7 +105,7 @@ export default function StaticObjectControls({ viewportConfig, setViewportConfig
 				/>
 			</div>
 
-			{viewportConfig.AddingObjects && (
+			{/* {viewportConfig.AddingObjects && (
 				<div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
 					<span style={{ minWidth: '80px' }}>Color:</span>
 					<ColorPicker
@@ -119,7 +119,7 @@ export default function StaticObjectControls({ viewportConfig, setViewportConfig
 						)}
 					/>
 				</div>
-			)}
+			)} */}
 
 			<Button 
 				onClick={handleUndoLastObject}

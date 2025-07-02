@@ -8,11 +8,10 @@ import { FluidParams } from './physics/sph';
 import Simulation from './physics/sph';
 
 const defaultFluidParams: FluidParams = {
-	NumParticles: 0,
 	ParticleMass: 1.0,
-	GasConstant: 5.0,
+	GasConstant: 20.0,
 	RestDensity: 0.5,
-	Viscosity: 1.0,
+	Viscosity: 3.0,
 };
 
 const defaultViewportConfig = {

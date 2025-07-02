@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useCallback, useImperativeHandle, forwardRef } from 'react';
 import * as THREE from 'three';
 import Sim, { FluidParams, StaticCircle, StaticPlane } from './physics/sph';
-import { vec2 } from './physics/util';
+import { vec2 } from "./physics/types/util";
 
 export interface ViewportConfig {
 	Interactable: boolean;
@@ -345,7 +345,6 @@ export default forwardRef<SimulationViewportRef, SimulationViewportProps>(functi
 			start = meshes.length;
 		}
 		
-		Sim.setNumParticles(n);
 		for (let i = start; i < n; i++) {
 			const mesh = new THREE.Mesh(circle, (material as THREE.MeshBasicMaterial).clone());
 			meshes[i] = mesh;
@@ -395,7 +394,8 @@ export default forwardRef<SimulationViewportRef, SimulationViewportProps>(functi
 					Sim.getParticlePosition(i, meshes[i].position);
 					const pressure = Sim.getParticlePressure(i);
 					(meshes[i].material as THREE.MeshBasicMaterial)
-						.color.setHSL((355 - pressure) / (255), 0.5, 0.5);
+						.color.setRGB( pressure / 50, 0.5, 0.5);
+						// .color.setHSL((355 - pressure) / (255), 0.5, 0.5);
 
 					// Change mesh based on movement
 					const velocity = Sim.getParticleVelocity(i);
@@ -514,8 +514,6 @@ export default forwardRef<SimulationViewportRef, SimulationViewportProps>(functi
 	useImperativeHandle(ref, () => ({
 		clearParticles: () => {
 			Sim.clearParticlesOnly();
-			// Also reset particle count to current fluid params
-			Sim.setNumParticles(fluidParams.NumParticles);
 		}
 	}), [fluidParams.NumParticles]);
 
@@ -564,11 +562,6 @@ export default forwardRef<SimulationViewportRef, SimulationViewportProps>(functi
 	useEffect(() => { Sim.setFluidProperties(fluidParams) },
 		[fluidParams]
 	);
-
-	// // Separate effect to handle particle count changes
-	// useEffect(() => { setNumParticles(fluidParams.NumParticles) },
-	// 	[fluidParams.NumParticles, setNumParticles]
-	// );
 
 	// Effect to handle window resize
 	useEffect(() => {
@@ -705,3 +698,9 @@ export default forwardRef<SimulationViewportRef, SimulationViewportProps>(functi
 		/>
 	);
 });
+
+
+// HMR handling - Reload page when this module is updated
+if ((import.meta as any).hot) {
+	(import.meta as any).hot.accept(() => { window.location.reload() });
+}

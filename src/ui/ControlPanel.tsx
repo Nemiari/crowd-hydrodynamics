@@ -35,7 +35,7 @@ export default function ControlPanel({
 				/>
 
 			</Space>
-			<Collapse defaultActiveKey={['2']} >
+			<Collapse defaultActiveKey={['0']} >
 
 				<Collapse.Panel header="Fluid Parameters" key="1">
 					<ControlParameters simParams={fluid} setSimParams={setFluidParams} />
